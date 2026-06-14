@@ -1,0 +1,14 @@
+{
+  "project_id": "deneme-projesi",
+  "status": "exploring",
+  "messages": [],
+  "discovery_data": {
+    "target_users": [],
+    "core_features": [],
+    "out_of_scope": [],
+    "technical_preferences": {},
+    "success_criteria": [],
+    "open_questions": []
+  },
+  "summary_approved": false
+}
