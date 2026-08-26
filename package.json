@@ -1,0 +1,15 @@
+{
+  "name": "ai-mvp-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first MVP factory powered by Codex CLI",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "test": "node --test",
+    "test:minimal-live": "node scripts/minimal-live-check.mjs",
+    "check": "node --check src/server.mjs && node --check src/orchestrator.mjs && node --check src/codex-runner.mjs && node --check src/spec-validator.mjs"
+  },
+  "engines": { "node": ">=24" }
+}
