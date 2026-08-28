@@ -11,7 +11,12 @@ const ROLE_DOCUMENTS = Object.freeze({
   integration: ['ARCHITECTURE.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
   test: ['PROJECT_SPEC.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
   repair: ['PROJECT_SPEC.md', 'TEST_REPORT.md', 'TEST_REPORT.json', 'PROJECT_STATE.json'],
-  reviewer: ['PROJECT_SPEC.md', 'TEST_REPORT.md', 'TEST_REPORT.json', 'PROJECT_STATE.json'],
+  device_repair: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'DEVICE_REPORT.json', 'TEST_REPORT.json', 'PROJECT_STATE.json'],
+  review_repair: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'TEST_REPORT.json', 'PROJECT_STATE.json'],
+  reviewer: [
+    'PROJECT_SPEC.md', 'USER_FLOWS.json', 'UX_SPEC.md', 'TEST_REPORT.md', 'TEST_REPORT.json',
+    'DEVICE_REPORT.json', 'PROJECT_STATE.json',
+  ],
 });
 
 const DEFAULT_LIMITS = Object.freeze({ documentChars: 18_000, totalChars: 60_000, diffChars: 12_000 });

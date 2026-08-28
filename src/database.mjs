@@ -2,6 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+/**
+ * Project statuses that only exist while the pipeline is actively working. If the
+ * Studio stops in one of them the project must become resumable again; anything
+ * missing here would leave the project stranded outside the resume contract.
+ */
+export const IN_FLIGHT_PROJECT_STATUSES = Object.freeze([
+  'queued', 'planning', 'building', 'testing', 'technically_verified',
+  'device_testing', 'device_repair', 'device_test_passed', 'reviewing', 'review_repair',
+]);
+
+/** Statuses the panel may restart from. `interrupted` is the recovery landing spot. */
+export const RESUMABLE_PROJECT_STATUSES = Object.freeze([
+  'paused_context', 'paused_usage', 'interrupted', 'failed', 'awaiting_device_test',
+]);
+
 export class Database {
   constructor(filePath) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -291,11 +306,12 @@ export class Database {
 
   markStaleRunsInterrupted() {
     const now = new Date().toISOString();
+    const placeholders = IN_FLIGHT_PROJECT_STATUSES.map(() => '?').join(', ');
     this.connection.prepare(`
       UPDATE projects
       SET status = 'interrupted', error = 'Studio yeniden başlatıldığı için çalışma duraklatıldı.', updated_at = ?
-      WHERE status IN ('queued', 'planning', 'building', 'reviewing')
-    `).run(now);
+      WHERE status IN (${placeholders})
+    `).run(now, ...IN_FLIGHT_PROJECT_STATUSES);
     this.connection.prepare(`
       UPDATE agent_runs
       SET status = 'interrupted', error = 'Studio yeniden başlatıldığı için agent çalışması kesildi.', completed_at = ?

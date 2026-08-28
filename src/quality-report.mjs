@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const CHECK_NAMES = ['analyze', 'test', 'apk'];
+export const CHECK_NAMES = ['analyze', 'test', 'apk', 'diagnostics'];
 const VALID_STATUSES = new Set(['PASS', 'FAIL', 'SKIPPED']);
 
 function normalizeStatus(value) {
@@ -38,6 +38,7 @@ export function normalizeQualityReport(raw = {}) {
       analyze: normalizeCheck(checks.analyze ?? checks.flutter_analyze, 'analyze'),
       test: normalizeCheck(checks.test ?? checks.tests ?? checks.flutter_test, 'test'),
       apk: normalizeCheck(checks.apk ?? checks.build ?? checks.android_build, 'apk'),
+      diagnostics: normalizeCheck(checks.diagnostics ?? checks.source_diagnostics, 'diagnostics'),
     },
   };
   report.status = CHECK_NAMES.every(name => report.checks[name].status === 'PASS') ? 'PASS' : 'FAIL';
@@ -84,7 +85,10 @@ export function renderQualityReportJson(report) {
 
 export function renderQualityReportMarkdown(report) {
   const normalized = normalizeQualityReport(report);
-  const labels = { analyze: 'Flutter analyze', test: 'Flutter test', apk: 'Android debug APK' };
+  const labels = {
+    analyze: 'Flutter analyze', test: 'Flutter test', apk: 'Android debug APK',
+    diagnostics: 'Kaynak teşhis kontrolü',
+  };
   const rows = CHECK_NAMES.map(name => {
     const check = normalized.checks[name];
     const detail = name === 'apk' && check.path ? check.path : (check.details || '—');
@@ -107,16 +111,43 @@ export function parseReviewerResult(value) {
     if (error?.code === 'INVALID_REVIEWER_RESULT') throw error;
     const structured = candidate.match(/^\s*(PASS|FAIL)\s*(?:[-—:]\s*(.*))?$/is);
     if (!structured) throw reviewerError('Reviewer çıktısı JSON veya tek satırlık PASS/FAIL olmalı.');
-    return validateReviewerResult({ status: structured[1], summary: structured[2] || '' });
+    const summary = structured[2] || '';
+    return validateReviewerResult({
+      status: structured[1],
+      summary,
+      issues: /fail/i.test(structured[1]) ? [summary || 'Gerekçe bildirilmedi.'] : [],
+    });
   }
+}
+
+/**
+ * Reviewers report findings either as plain strings or as `{file, description}`
+ * objects. Coercing the object form with String() would render it as
+ * "[object Object]" and lose the only actionable part of the verdict.
+ */
+export function normalizeReviewerFindings(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(entry => {
+    if (entry && typeof entry === 'object') {
+      const location = entry.file || entry.path || entry.location || '';
+      const text = entry.description || entry.message || entry.issue || entry.detail || '';
+      return [location, text].filter(Boolean).join(': ') || JSON.stringify(entry);
+    }
+    return String(entry ?? '').trim();
+  }).filter(Boolean);
 }
 
 export function validateReviewerResult(raw = {}) {
   const status = normalizeStatus(raw.status ?? raw.result);
   if (!['PASS', 'FAIL'].includes(status)) throw reviewerError('Reviewer status yalnızca PASS veya FAIL olabilir.');
-  const issues = Array.isArray(raw.issues) ? raw.issues.map(String).filter(Boolean) : [];
+  const issues = normalizeReviewerFindings(raw.issues);
+  // Observations the reviewer could not verify belong here, not in issues.
+  const notes = normalizeReviewerFindings(raw.notes);
   if (status === 'PASS' && issues.length) throw reviewerError('PASS reviewer sonucu engelleyici issue içeremez.');
-  return { status, summary: String(raw.summary || raw.message || ''), issues };
+  if (status === 'FAIL' && !issues.length) {
+    throw reviewerError('FAIL reviewer sonucu en az bir engelleyici issue bildirmelidir.');
+  }
+  return { status, summary: String(raw.summary || raw.message || ''), issues, notes };
 }
 
 function reviewerError(message) {

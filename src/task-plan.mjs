@@ -1,10 +1,110 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { pathsOverlap } from './task-scheduler.mjs';
+
 const TASK_ID = /^[a-z0-9][a-z0-9-]{1,48}$/;
 const RESERVED_TASK_IDS = new Set([
   'architecture', 'ux', 'coordinator', 'integration', 'test', 'repair', 'reviewer',
 ]);
+
+/** Files the orchestrator owns; a builder claiming them serialises the graph. */
+const ORCHESTRATOR_OWNED_PATHS = ['pubspec.yaml', 'pubspec.lock'];
+
+function assertAcyclic(tasks) {
+  const dependencies = new Map(tasks.map(task => [task.id, task.depends_on]));
+  const state = new Map();
+  const visit = (id, trail) => {
+    if (state.get(id) === 'done') return;
+    if (state.get(id) === 'open') {
+      throw new Error(`TASK_PLAN.json döngüsel bağımlılık içeriyor: ${[...trail, id].join(' -> ')}`);
+    }
+    state.set(id, 'open');
+    for (const dependency of dependencies.get(id) || []) visit(dependency, [...trail, id]);
+    state.set(id, 'done');
+  };
+  for (const task of tasks) visit(task.id, []);
+}
+
+function transitiveDependencies(tasks) {
+  const direct = new Map(tasks.map(task => [task.id, task.depends_on]));
+  const closure = new Map();
+  const visit = id => {
+    if (closure.has(id)) return closure.get(id);
+    const reached = new Set();
+    closure.set(id, reached);
+    for (const dependency of direct.get(id) || []) {
+      reached.add(dependency);
+      for (const nested of visit(dependency)) reached.add(nested);
+    }
+    return reached;
+  };
+  for (const task of tasks) visit(task.id);
+  return closure;
+}
+
+/** Task pairs with no dependency path between them, so the scheduler may co-run them. */
+export function concurrentTaskPairs(tasks) {
+  const closure = transitiveDependencies(tasks);
+  const pairs = [];
+  for (let left = 0; left < tasks.length; left += 1) {
+    for (let right = left + 1; right < tasks.length; right += 1) {
+      const a = tasks[left];
+      const b = tasks[right];
+      if (!closure.get(a.id).has(b.id) && !closure.get(b.id).has(a.id)) pairs.push([a, b]);
+    }
+  }
+  return pairs;
+}
+
+/** Widest dependency level: how many builder tasks can ever run at the same time. */
+export function taskGraphWidth(tasks) {
+  const dependencies = new Map(tasks.map(task => [task.id, task.depends_on]));
+  const depth = new Map();
+  const compute = id => {
+    if (depth.has(id)) return depth.get(id);
+    depth.set(id, 0);
+    const levels = (dependencies.get(id) || []).map(compute);
+    const value = levels.length ? Math.max(...levels) + 1 : 0;
+    depth.set(id, value);
+    return value;
+  };
+  const counts = new Map();
+  for (const task of tasks) {
+    const level = compute(task.id);
+    counts.set(level, (counts.get(level) || 0) + 1);
+  }
+  return Math.max(...counts.values());
+}
+
+/**
+ * Rejects plans that cannot actually run in parallel. Measured on real runs:
+ * three independent builders were serialised to x1.00 because one owned
+ * `test/features/products/**` while another owned `test/features/products/detail/**`.
+ */
+function assertParallelizable(tasks) {
+  const conflicts = [];
+  for (const [a, b] of concurrentTaskPairs(tasks)) {
+    for (const left of a.allowed_paths) {
+      for (const right of b.allowed_paths) {
+        if (pathsOverlap(left, right)) conflicts.push(`${a.id} (${left}) ↔ ${b.id} (${right})`);
+      }
+    }
+  }
+  if (conflicts.length) {
+    throw new Error(
+      'Birbirine bağlı olmayan görevler aynı dosyaları sahipleniyor, bu yüzden paralel '
+      + 'çalışamazlar. İç içe yollar da çakışma sayılır; her yolun tek sahibi olmalı. '
+      + `Çakışmalar: ${conflicts.slice(0, 5).join('; ')}`,
+    );
+  }
+  if (tasks.length >= 3 && taskGraphWidth(tasks) < 2) {
+    throw new Error(
+      'TASK_PLAN.json tamamen seri: her görev bir öncekine bağlı. Üç veya daha fazla '
+      + 'görevde en az iki görev birbirinden bağımsız olmalı ki paralel çalışabilsinler.',
+    );
+  }
+}
 
 function normalizeTaskId(value) {
   return String(value ?? '').trim().toLowerCase().replace(/[_\s]+/g, '-');
@@ -30,6 +130,13 @@ export function validateTaskPlan(rawPlan, { maxTasks = 5 } = {}) {
     ids.add(id);
     const allowedPaths = normalizedPatterns(task.allowed_paths);
     if (!allowedPaths.length) throw new Error(`${id} için allowed_paths gerekli.`);
+    const owned = allowedPaths.filter(value => ORCHESTRATOR_OWNED_PATHS.includes(value));
+    if (owned.length) {
+      throw new Error(
+        `${id} orchestrator'a ait dosyaları sahiplenemez: ${owned.join(', ')}. `
+        + 'Paket bağımlılıkları plan içindeki `dependencies` alanında bildirilir.',
+      );
+    }
     return {
       id,
       title: String(task.title || id),
@@ -48,7 +155,29 @@ export function validateTaskPlan(rawPlan, { maxTasks = 5 } = {}) {
       if (dependency === task.id) throw new Error(`${task.id} kendisine bağlı olamaz.`);
     }
   }
-  return { version: 1, profile: rawPlan.profile || 'flutter_mobile', tasks: normalized };
+  assertAcyclic(normalized);
+  assertParallelizable(normalized);
+  return {
+    version: 1,
+    profile: rawPlan.profile || 'flutter_mobile',
+    dependencies: normalizePackageDependencies(rawPlan.dependencies),
+    tasks: normalized,
+  };
+}
+
+/** Package names the orchestrator installs with `flutter pub add` before building. */
+export function normalizePackageDependencies(value) {
+  const entries = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  return entries
+    .map(entry => String(entry ?? '').trim())
+    .filter(entry => /^[a-z_][a-z0-9_]*(?::\s*\S+)?$/i.test(entry))
+    .filter(entry => {
+      const name = entry.split(':')[0].trim();
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
 }
 
 export function readTaskPlan(workspace, options) {

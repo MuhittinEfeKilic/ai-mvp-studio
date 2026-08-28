@@ -49,14 +49,30 @@ PROJECT_SPEC.md
                                        completed
 ```
 
+Studio, agent'lar başlamadan önce `flutter create` ile uygulama iskeletini kendisi
+üretir ve soğuk Gradle derlemesini planlama agent'larıyla eşzamanlı olarak arka
+planda ısıtır. Paket bağımlılıkları `TASK_PLAN.json` içindeki `dependencies`
+alanından okunup `flutter pub add` ile kurulur; hiçbir builder `pubspec.yaml`
+sahiplenemez.
+
 Architecture ve UX agent'ları ayrı Git worktree'lerinde çalışır ve yalnızca kendi
 plan dosyalarını değiştirebilir. Coordinator doğrulanan `TASK_PLAN.json` dosyasını
-üretir. Scheduler bağımsız Flutter Builder görevlerini en fazla üç ayrı worktree'de
-paralel çalıştırır; dosya kapsamını doğrulayıp branch'leri deterministik sırayla
-birleştirir. Integration, Flutter Test, koşullu Repair ve Mobile Reviewer aşamaları
+üretir. Scheduler bağımsız Flutter Builder görevlerini ayrı worktree'lerde paralel
+çalıştırır ve biten görevin slotunu hemen serbest bırakır. Plan sözleşmesi
+paralelliği zorunlu kılar: birbirine bağlı olmayan görevler aynı yolları
+sahiplenemez (iç içe yollar da çakışma sayılır) ve üç veya daha fazla görevli
+tamamen seri plan reddedilir. Reviewer, cihaz kapısı APK'yı çalıştırırken eş
+zamanlı olarak incelemesini yapar. Integration, Flutter Test, koşullu Repair ve Mobile Reviewer aşamaları
 bu grafiğin devamında çalışır.
 
 ## Checkpoint ve devam sistemi
+
+Aynı proje için aynı anda yalnız bir çalışma yürütülür; devam ettirme, görev yeniden
+deneme ve geri bildirim istekleri çalışan bir projede reddedilir. Devam ettirme
+tamamlanmış Architecture, UX, Coordinator, Integration ve Reviewer aşamalarını atlar.
+
+Tek bir Codex çağrısı `MVP_STUDIO_CODEX_TIMEOUT_MS` süresini aşarsa süreç ağacı
+sonlandırılır ve proje devam ettirilebilir biçimde `failed` olur.
 
 Studio projelere sabit süre veya token sınırı koymaz. Her agent başlamadan önce
 mevcut Git commit'i checkpoint olarak SQLite'a kaydedilir; Codex thread kimliği ve
@@ -91,17 +107,36 @@ gerçek yeni giriş tokenını ayrıca gösterir.
 
 Flutter kalite kapısı `flutter analyze`, `flutter test` ve `flutter build apk --debug`
 sonuçlarının üçünü de yapılandırılmış `TEST_REPORT.json` içinde PASS olarak ister ve
-APK dosyasının workspace içinde gerçekten var olduğunu doğrular. Teknik başarı projeyi
+APK dosyasının workspace içinde gerçekten var olduğunu doğrular. Dördüncü çek olan
+kaynak teşhis kontrolü, üretilen koddaki boş veya hatayı yutan `catch` bloklarını
+bloklayıcı hata sayar; hata ya incelenmeli ya yeniden fırlatılmalıdır. Teknik başarı projeyi
 `awaiting_user_review` durumuna getirir; kullanıcı panelden APK'yı indirebilir, ürünü
 kabul edebilir veya hedefli bir Feedback Repair turu başlatabilir.
 
 Mobil spec'te `device_test: "required"` ise teknik kontrolden sonra Android cihaz
-kapısı çalışır. Studio `ADB_BIN`, Android SDK platform-tools ve LDPlayer 9 yollarını
+kapısı çalışır. Bağlı cihaz yoksa Studio `flutter emulators --launch` ile ilk
+emülatörü kendisi başlatır ve `sys.boot_completed` özelliğini bekler; açılış
+tamamlanmadan test başlatılmaz. Emülatör bulunamaz veya açılmazsa proje
+`awaiting_device_test` durumunda güvenle bekler. Aynı kapı kullanıcı geri bildirimi turundan sonra da çalışır; teknik
+kontroller tek başına ürün kabulü için yeterli sayılmaz. Studio `ADB_BIN`, Android SDK platform-tools ve LDPlayer 9 yollarını
 sırayla arar. Bağlı cihaz yoksa proje `awaiting_device_test` durumunda bekler. Cihaz
 bağlandığında paneldeki **Cihaz testini yeniden dene** düğmesi kullanılabilir. Kapı,
 kritik akışların `integration_test/` kapsamını, cihaz üstündeki Flutter integration
 testlerini, APK kurulumunu, uygulama sürecini ve logcat crash kayıtlarını doğrular.
 Kanıtlar `DEVICE_REPORT.json` ve `QUALITY_LOGS/DEVICE_*` dosyalarında saklanır.
+
+Cihazda ürün kaynaklı bir hata çıkarsa en fazla iki hedefli Device Repair turu
+uygulanır; her turdan sonra APK yeniden üretilip doğrulanır. Aynı hata imzası
+tekrarlarsa, tur hakkı biterse veya hata bir agent turuyla düzeltilemezse
+`DEVICE_ROOT_CAUSE_REPORT.md` yazılır ve döngü durur.
+
+Cihaz kapısı arızayı sınıflandırır. Emülatör kopması, ABI uyumsuzluğu veya toolchain
+çöküşü gibi ortam arızaları `DEVICE_REPORT.json` içinde
+`failure_kind: "environment"` ile işaretlenir ve projeyi başarısız saymak yerine
+`awaiting_device_test` durumunda bekletir. Testlerden gelen gerçek hatalar
+`failure_kind: "product"` olarak kalır; tanınmayan hata da ürün hatası sayılır.
+Panel hata mesajında gerçekten başarısız olan çeki, exit kodunu ve ilgili log dosyasını
+gösterir.
 
 ## Pipeline stabilizasyonu
 
@@ -147,6 +182,13 @@ npm start
 ```
 
 Panel: <http://127.0.0.1:8000>
+
+Ayarlar ortam değişkenleriyle değiştirilebilir; tüm anahtarlar ve varsayılanları
+[.env.example](.env.example) dosyasındadır. Eşzamanlılık üç ayrı sınırla yönetilir:
+aynı anda çalışan proje sayısı (`MVP_STUDIO_MAX_CONCURRENT_RUNS`), bir projedeki
+paralel builder sayısı (`MVP_STUDIO_MAX_PARALLEL_BUILDERS`) ve tüm sistemdeki
+Codex süreci sayısı (`MVP_STUDIO_MAX_CONCURRENT_AGENTS`). Sonuncusu diğer ikisinin
+çarpımını sınırlayan üst kapıdır.
 
 Terminalde aşağıdaki satır göründüğünde sunucu hazırdır:
 
@@ -196,11 +238,15 @@ yerleşik modüllerini kullanır. Runtime verileri `data/` ve `projects/` altın
 | --- | --- |
 | `src/server.mjs` | Yerel HTTP API ve web paneli |
 | `src/orchestrator.mjs` | Agent pipeline, checkpoint, Flutter kalite kapısı |
-| `src/codex-runner.mjs` | Codex CLI sürecini çalıştırma ve JSONL olaylarını okuma |
+| `src/codex-runner.mjs` | Codex CLI sürecini çalıştırma, timeout ve JSONL olayları |
 | `src/database.mjs` | SQLite proje, görev, bağımlılık ve agent run kayıtları |
 | `src/spec-validator.mjs` | Yüklenen PROJECT_SPEC doğrulaması |
 | `src/task-*.mjs` | Görev planı, scheduler ve worktree/path izolasyonu |
 | `src/quality-report.mjs` | Analyze, test ve APK raporlarının doğrulanması |
+| `src/device-tester.mjs` | Android cihaz kapısı ve arıza sınıflandırması |
+| `src/source-diagnostics.mjs` | Üretilen Dart kaynağında sessiz hata yutma taraması |
+| `src/android-environment.mjs` | Emülatör başlatma, açılış bekleme, build-tools sağlığı |
+| `src/config.mjs` | Ortam değişkenleri ve varsayılan ayarlar |
 | `templates/` | Genel ve Flutter mobil PROJECT_SPEC şablonları |
 | `projects/<id>/repository/` | Üretilen uygulamanın ana Git repository'si |
 | `projects/<id>/worktrees/` | Agent'ların izole çalışma alanları |

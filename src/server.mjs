@@ -13,10 +13,12 @@ fs.mkdirSync(config.projectsDir, { recursive: true });
 
 const database = new Database(config.databasePath);
 database.markStaleRunsInterrupted();
-const runner = new CodexRunner(config.codexCommand);
+const runner = new CodexRunner(config.codexCommand, { timeoutMs: config.codexTimeoutMs });
 const orchestrator = new Orchestrator({
   database, runner, projectsDir: config.projectsDir,
   maxConcurrentRuns: config.maxConcurrentRuns,
+  maxConcurrentAgents: config.maxConcurrentAgents,
+  maxParallelBuilders: config.maxParallelBuilders,
 });
 const indexHtml = fs.readFileSync(path.join(config.root, 'src', 'mvp_studio', 'static', 'index.html'), 'utf8');
 const specTemplate = fs.readFileSync(path.join(config.root, 'templates', 'PROJECT_SPEC.template.md'), 'utf8');

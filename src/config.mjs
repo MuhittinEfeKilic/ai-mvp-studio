@@ -1,17 +1,24 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { DEFAULT_RUN_TIMEOUT_MS } from './codex-runner.mjs';
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** Falls back to PATH when APPDATA is unavailable, so importing never throws. */
+function defaultCodexCommand() {
+  if (process.platform !== 'win32' || !process.env.APPDATA) return 'codex';
+  return path.join(process.env.APPDATA, 'npm', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+}
 
 export const config = Object.freeze({
   host: process.env.MVP_STUDIO_HOST ?? '127.0.0.1',
   port: Number(process.env.MVP_STUDIO_PORT ?? 8000),
   maxConcurrentRuns: Number(process.env.MVP_STUDIO_MAX_CONCURRENT_RUNS ?? 3),
-  codexCommand: process.env.MVP_STUDIO_CODEX_COMMAND ?? (
-    process.platform === 'win32'
-      ? path.join(process.env.APPDATA, 'npm', 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
-      : 'codex'
-  ),
+  maxConcurrentAgents: Number(process.env.MVP_STUDIO_MAX_CONCURRENT_AGENTS ?? 3),
+  maxParallelBuilders: Number(process.env.MVP_STUDIO_MAX_PARALLEL_BUILDERS ?? 3),
+  codexTimeoutMs: Number(process.env.MVP_STUDIO_CODEX_TIMEOUT_MS ?? DEFAULT_RUN_TIMEOUT_MS),
+  codexCommand: process.env.MVP_STUDIO_CODEX_COMMAND ?? defaultCodexCommand(),
   root,
   dataDir: path.join(root, 'data'),
   projectsDir: path.join(root, 'projects'),

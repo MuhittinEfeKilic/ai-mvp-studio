@@ -5,7 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  adbCandidates, parseAdbDevices, runAndroidDeviceGate, validateFlowCoverage,
+  adbCandidates, classifyDeviceFailure, describeDeviceFailure, isRepairableDeviceFailure,
+  parseAdbDevices,
+  runAndroidDeviceGate,
+  validateFlowCoverage,
 } from '../src/device-tester.mjs';
 
 test('ADB candidates prefer explicit configuration and include LDPlayer on Windows', () => {
@@ -29,9 +32,9 @@ test('critical flow coverage requires one integration test file per flow', () =>
   assert.equal(validateFlowCoverage(workspace, [{}, {}]).status, 'PASS');
 });
 
-test('device gate waits without failing when no emulator is connected', () => {
+test('device gate waits without failing when no emulator is connected', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-wait-'));
-  const report = runAndroidDeviceGate({
+  const report = await runAndroidDeviceGate({
     workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}],
     flutterExecutable: 'flutter', adbExecutable: 'adb',
     run: (_command, args) => args[0] === 'devices'
@@ -39,24 +42,132 @@ test('device gate waits without failing when no emulator is connected', () => {
       : { status: 0, stdout: '' },
   });
   assert.equal(report.status, 'WAITING');
-  assert.match(report.reason, /cihaz\/emülatör/);
+  assert.match(report.reason, /başlatılabilecek emülatör bulunamadı/);
 });
 
-test('device gate runs integration, installs APK, launches app and rejects fatal logs', () => {
+test('device gate runs integration, installs APK, launches app and rejects fatal logs', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-gate-'));
   fs.mkdirSync(path.join(workspace, 'integration_test'));
   fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
   const run = (command, args) => {
     if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+    if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
     if (args.includes('pidof')) return { status: 0, stdout: '1234\n' };
     if (args.includes('logcat') && args.includes('-d')) return { status: 0, stdout: 'Application started' };
     return { status: 0, stdout: command === 'flutter' ? 'All tests passed' : 'Success' };
   };
-  const report = runAndroidDeviceGate({
+  const report = await runAndroidDeviceGate({
     workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}],
     flutterExecutable: 'flutter', adbExecutable: 'adb', run,
   });
   assert.equal(report.status, 'PASS');
   assert.equal(report.checks.integration_test.status, 'PASS');
   assert.equal(report.checks.launch.process_id, '1234');
+});
+
+test('device failure description names the check that actually failed', () => {
+  // Shape recorded for project b9c53b9a14bf: coverage passed, the device run did not.
+  const message = describeDeviceFailure({
+    status: 'FAIL',
+    checks: {
+      flow_coverage: { status: 'PASS', details: '4 kritik akış için 4 integration test dosyası bulundu.' },
+      integration_test: { status: 'FAIL', exit_code: 1 },
+    },
+  });
+  assert.match(message, /integration test/i);
+  assert.match(message, /exit 1/);
+  assert.match(message, /DEVICE_INTEGRATION_TEST\.log/);
+  assert.doesNotMatch(message, /4 integration test dosyası bulundu/);
+});
+
+test('device failure description reports coverage, launch and early-exit reasons', () => {
+  assert.match(
+    describeDeviceFailure({ status: 'FAIL', checks: {
+      flow_coverage: { status: 'FAIL', details: '3 kritik akış için 1 integration test dosyası bulundu.' },
+    } }),
+    /Kritik akış kapsamı: FAIL · 3 kritik akış için 1 integration test dosyası bulundu\./,
+  );
+  assert.match(
+    describeDeviceFailure({ status: 'FAIL', checks: {
+      flow_coverage: { status: 'PASS' }, integration_test: { status: 'PASS' },
+      apk_install: { status: 'PASS' },
+      launch: { status: 'FAIL', process_id: null, fatal_log: true },
+    } }),
+    /Uygulama açılışı: FAIL · logcat içinde fatal kayıt var · Log: .*DEVICE_LOGCAT\.log/,
+  );
+  assert.equal(
+    describeDeviceFailure({ status: 'WAITING', reason: 'Bağlı ve hazır Android cihaz/emülatör bulunamadı.', checks: {} }),
+    'Bağlı ve hazır Android cihaz/emülatör bulunamadı.',
+  );
+  assert.equal(describeDeviceFailure({ status: 'FAIL', checks: {} }), 'DEVICE_REPORT.json dosyasını inceleyin.');
+});
+
+test('device failures are classified as environment or product', () => {
+  const realEmulatorCrash = [
+    'Failed to load "integration_test/product_search_empty_test.dart":',
+    ' No application found for TargetPlatform.android_x64.',
+    'Error waiting for a debug connection: The log reader stopped unexpectedly',
+    'adb.exe: device offline',
+    'Some tests failed.',
+  ].join('\n');
+  assert.equal(classifyDeviceFailure(realEmulatorCrash).kind, 'environment');
+  assert.match(classifyDeviceFailure(realEmulatorCrash).signal, /No application found for TargetPlatform/);
+
+  const assertionFailure = [
+    '00:03 +0 -1: stok akışı [E]',
+    '  EXCEPTION CAUGHT BY FLUTTER TEST FRAMEWORK',
+    '  Expected: exactly one matching candidate',
+    '  Actual: _TextFinder:<zero widgets>',
+    'adb.exe: device offline',
+  ].join('\n');
+  assert.equal(classifyDeviceFailure(assertionFailure).kind, 'product');
+
+  // An unrecognised failure stays a product defect so nothing is silently parked.
+  assert.deepEqual(classifyDeviceFailure('flutter: something unexpected'), { kind: 'product', signal: null });
+});
+
+test('device gate waits instead of failing when the emulator breaks mid-run', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-env-'));
+  fs.mkdirSync(path.join(workspace, 'integration_test'));
+  fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
+  const gate = integrationOutput => runAndroidDeviceGate({
+    workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}],
+    flutterExecutable: 'flutter', adbExecutable: 'adb',
+    run: (command, args) => {
+      if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      if (command === 'flutter') return { status: 1, stdout: integrationOutput };
+      return { status: 0, stdout: '' };
+    },
+  });
+
+  const broken = await gate('Unable to start the app on the device\nadb.exe: device offline');
+  assert.equal(broken.status, 'WAITING');
+  assert.equal(broken.failure_kind, 'environment');
+  assert.match(broken.reason, /Cihazda integration test cihaz\/ortam arızası/);
+
+  const defective = await gate('EXCEPTION CAUGHT BY FLUTTER TEST FRAMEWORK\nExpected: <1>');
+  assert.equal(defective.status, 'FAIL');
+  assert.equal(defective.failure_kind, 'product');
+});
+
+test('a missing critical-flow contract is not worth a repair round', () => {
+  const missingContract = {
+    status: 'FAIL',
+    checks: { flow_coverage: {
+      status: 'FAIL', required_flows: 0,
+      details: 'USER_FLOWS.json içinde kritik akış bulunamadı.',
+    } },
+  };
+  assert.equal(isRepairableDeviceFailure(missingContract), false);
+
+  // Missing tests for known flows are exactly what a repair agent can write.
+  assert.equal(isRepairableDeviceFailure({
+    status: 'FAIL',
+    checks: { flow_coverage: { status: 'FAIL', required_flows: 3, integration_tests: [] } },
+  }), true);
+  assert.equal(isRepairableDeviceFailure({
+    status: 'FAIL',
+    checks: { flow_coverage: { status: 'PASS' }, integration_test: { status: 'FAIL' } },
+  }), true);
 });

@@ -1,6 +1,11 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+
+import { ensureBootedDevice, parseAdbDevices } from './android-environment.mjs';
+
+export { parseAdbDevices };
 
 const normalizePath = value => String(value || '').replaceAll('\\', '/');
 
@@ -12,14 +17,6 @@ export function adbCandidates(env = process.env, platform = process.platform) {
   }
   values.push('adb');
   return [...new Set(values.filter(Boolean))];
-}
-
-export function parseAdbDevices(output) {
-  return String(output || '').split(/\r?\n/).slice(1).map(line => line.trim())
-    .filter(Boolean).map(line => {
-      const [id, state] = line.split(/\s+/, 2);
-      return { id, state };
-    });
 }
 
 export function findIntegrationTests(workspace) {
@@ -47,6 +44,130 @@ export function validateFlowCoverage(workspace, flows = []) {
   };
 }
 
+/**
+ * Toolchain, emulator and host failures that say nothing about the produced app.
+ * Matching one of these means a retry on a healthy device may still succeed.
+ */
+const ENVIRONMENT_SIGNALS = [
+  /device offline/i,
+  /device (?:'[^']*' )?not found/i,
+  /Unable to start the app on the device/i,
+  /No application found for TargetPlatform/i,
+  /The log reader stopped unexpectedly/i,
+  /Error waiting for a debug connection/i,
+  /Failed to extract manifest from APK/i,
+  /exit code -\d{6,}/i,
+  /INSTALL_FAILED_(?:INSUFFICIENT_STORAGE|MEDIA_UNAVAILABLE|DEVICE_OFFLINE|UPDATE_INCOMPATIBLE)/i,
+  /daemon not running|cannot connect to daemon|adb server/i,
+  /Connection refused|Connection reset by peer|Software caused connection abort/i,
+];
+
+/** Failures that come from the generated application or its tests. */
+const PRODUCT_SIGNALS = [
+  /EXCEPTION CAUGHT BY FLUTTER TEST FRAMEWORK/i,
+  /The following TestFailure was thrown/i,
+  /^\s*Expected:\s/m,
+  /^\s*Actual:\s/m,
+  /Test failed\. See exception logs above/i,
+  /FATAL EXCEPTION/,
+  /Unhandled Exception/i,
+  /\bAssertionError\b/,
+];
+
+/** Returns the signal appearing earliest in the log, which is the likely root cause. */
+function firstMatch(patterns, text) {
+  let earliest = null;
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && (earliest === null || match.index < earliest.index)) earliest = match;
+  }
+  return earliest ? earliest[0].trim() : null;
+}
+
+/**
+ * Separates device-gate failures caused by the host/emulator from failures
+ * caused by the generated app. Product signals win, and an unrecognised failure
+ * stays 'product' so a real defect is never silently parked as a wait state.
+ */
+export function classifyDeviceFailure(logText) {
+  const text = String(logText || '');
+  const product = firstMatch(PRODUCT_SIGNALS, text);
+  if (product) return { kind: 'product', signal: product };
+  const environment = firstMatch(ENVIRONMENT_SIGNALS, text);
+  if (environment) return { kind: 'environment', signal: environment };
+  return { kind: 'product', signal: null };
+}
+
+const DEVICE_CHECK_ORDER = ['flow_coverage', 'integration_test', 'apk_install', 'launch'];
+
+const DEVICE_CHECK_LABELS = Object.freeze({
+  flow_coverage: 'Kritik akış kapsamı',
+  integration_test: 'Cihazda integration test',
+  apk_install: 'APK kurulumu',
+  launch: 'Uygulama açılışı',
+});
+
+const DEVICE_CHECK_LOGS = Object.freeze({
+  integration_test: ['QUALITY_LOGS/DEVICE_INTEGRATION_TEST.log'],
+  apk_install: ['QUALITY_LOGS/DEVICE_APK_INSTALL.log'],
+  launch: ['QUALITY_LOGS/DEVICE_LAUNCH.log', 'QUALITY_LOGS/DEVICE_LOGCAT.log'],
+});
+
+/**
+ * Stable fingerprint of a device failure. Timing, clock and address noise is
+ * removed so an unchanged failure across two rounds stops the repair loop
+ * instead of burning another Codex turn on the same problem.
+ */
+export function deviceFailureSignature(report) {
+  const checks = Object.entries(report?.checks || {})
+    .map(([name, check]) => `${name}:${check?.status}:${check?.exit_code ?? ''}`)
+    .sort()
+    .join('|');
+  const logs = Object.values(report?.logs || {}).join('\n')
+    .replaceAll('\\', '/')
+    .replace(/\b\d+(?:[.,]\d+)?\s*s\b/g, '<time>')
+    .replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, '<clock>')
+    .replace(/\b0x[0-9a-f]+\b/gi, '<addr>')
+    .split(/\r?\n/)
+    .filter(line => /error|fail|exception|cannot|unable|\[e\]/i.test(line))
+    .slice(-40)
+    .join('\n');
+  return crypto.createHash('sha256').update(`${checks}\n${logs}`).digest('hex').slice(0, 16);
+}
+
+/**
+ * A repair agent can write missing integration tests, but it cannot invent the
+ * critical-flow contract itself. Without USER_FLOWS.json the fix belongs to the
+ * spec, so repair rounds would only burn tokens.
+ */
+export function isRepairableDeviceFailure(report) {
+  const coverage = report?.checks?.flow_coverage;
+  return !(coverage && coverage.status !== 'PASS' && !coverage.required_flows);
+}
+
+/**
+ * Describes why a device gate report is not PASS, naming the check that actually
+ * failed instead of the first check recorded in the report.
+ */
+export function describeDeviceFailure(report) {
+  const reason = String(report?.reason || '').trim();
+  if (reason) return reason;
+  const checks = report?.checks || {};
+  const names = [
+    ...DEVICE_CHECK_ORDER.filter(name => name in checks),
+    ...Object.keys(checks).filter(name => !DEVICE_CHECK_ORDER.includes(name)),
+  ];
+  const failed = names.find(name => checks[name]?.status && checks[name].status !== 'PASS');
+  if (!failed) return 'DEVICE_REPORT.json dosyasını inceleyin.';
+  const check = checks[failed];
+  const parts = [`${DEVICE_CHECK_LABELS[failed] || failed}: ${check.status}`];
+  if (Number.isInteger(check.exit_code)) parts.push(`exit ${check.exit_code}`);
+  if (check.details) parts.push(String(check.details).trim());
+  if (check.fatal_log) parts.push('logcat içinde fatal kayıt var');
+  if (DEVICE_CHECK_LOGS[failed]) parts.push(`Log: ${DEVICE_CHECK_LOGS[failed].join(', ')}`);
+  return parts.join(' · ');
+}
+
 function defaultRun(command, args, options = {}) {
   const invocation = process.platform === 'win32' && /\.(?:bat|cmd)$/i.test(command)
     ? { command: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command, ...args] }
@@ -59,17 +180,49 @@ function defaultRun(command, args, options = {}) {
 const outputOf = result => [result.stdout, result.stderr, result.error?.message]
   .filter(Boolean).join('\n').trim();
 
-export function resolveAdb({ env = process.env, platform = process.platform, run = defaultRun } = {}) {
+let cachedAdb;
+
+/** Memoised like the Flutter lookup; each probe is a real `adb version` spawn. */
+export function resolveAdb({ env = process.env, platform = process.platform, run = defaultRun, cache = true } = {}) {
+  if (cache && cachedAdb !== undefined) return cachedAdb;
+  let resolved = null;
   for (const candidate of adbCandidates(env, platform)) {
     const result = run(candidate, ['version']);
-    if (result.status === 0) return candidate;
+    if (result.status === 0) {
+      resolved = candidate;
+      break;
+    }
   }
-  return null;
+  if (cache) cachedAdb = resolved;
+  return resolved;
 }
 
-export function runAndroidDeviceGate({
+export function resetAdbCache() {
+  cachedAdb = undefined;
+}
+
+/**
+ * Turns a host/emulator failure into a resumable WAITING report so that a broken
+ * device never marks the generated application as defective.
+ */
+function environmentWait(report, checkName, logText) {
+  const { kind, signal } = classifyDeviceFailure(logText);
+  if (kind !== 'environment') return null;
+  const label = DEVICE_CHECK_LABELS[checkName] || checkName;
+  return {
+    ...report,
+    status: 'WAITING',
+    failure_kind: 'environment',
+    reason: `${label} cihaz/ortam arızası nedeniyle tamamlanamadı: ${signal}. `
+      + 'Emülatörü yeniden başlatıp cihaz testini tekrar deneyin.',
+  };
+}
+
+const productFailure = report => ({ ...report, failure_kind: 'product' });
+
+export async function runAndroidDeviceGate({
   workspace, apkPath, packageName, flows, flutterExecutable, adbExecutable,
-  run = defaultRun,
+  run = defaultRun, acquireDevice = ensureBootedDevice,
 }) {
   const coverage = validateFlowCoverage(workspace, flows);
   const report = {
@@ -79,25 +232,41 @@ export function runAndroidDeviceGate({
   if (!packageName) return { ...report, reason: 'PROJECT_SPEC package_name alanı eksik.' };
   if (!flutterExecutable) return { ...report, reason: 'Flutter executable bulunamadı.' };
   if (!adbExecutable) return { ...report, status: 'WAITING', reason: 'ADB bulunamadı.' };
-  const listed = run(adbExecutable, ['devices', '-l'], { cwd: workspace });
-  report.logs.adb_devices = outputOf(listed);
-  const device = parseAdbDevices(listed.stdout).find(item => item.state === 'device');
-  if (!device) return { ...report, status: 'WAITING', reason: 'Bağlı ve hazır Android cihaz/emülatör bulunamadı.' };
+  // Starts an emulator when none is connected and waits for boot completion.
+  const acquired = await acquireDevice({
+    run: (command, args) => run(command, args, { cwd: workspace }),
+    adb: adbExecutable,
+    flutter: flutterExecutable,
+  });
+  report.logs.adb_devices = (acquired.log || []).join('\n');
+  if (!acquired.device) {
+    return {
+      ...report,
+      status: 'WAITING',
+      reason: acquired.reason || 'Bağlı ve hazır Android cihaz/emülatör bulunamadı.',
+    };
+  }
+  const device = { id: acquired.device };
   report.device = device.id;
-  if (coverage.status !== 'PASS') return report;
+  if (coverage.status !== 'PASS') return productFailure(report);
 
   const integration = run(flutterExecutable, ['test', 'integration_test', '-d', device.id], { cwd: workspace });
   report.logs.integration_test = outputOf(integration);
   report.checks.integration_test = {
     status: integration.status === 0 ? 'PASS' : 'FAIL', exit_code: integration.status,
   };
-  if (integration.status !== 0) return report;
+  if (integration.status !== 0) {
+    return environmentWait(report, 'integration_test', report.logs.integration_test)
+      ?? productFailure(report);
+  }
 
   run(adbExecutable, ['-s', device.id, 'logcat', '-c'], { cwd: workspace });
   const install = run(adbExecutable, ['-s', device.id, 'install', '-r', '-t', apkPath], { cwd: workspace });
   report.logs.apk_install = outputOf(install);
   report.checks.apk_install = { status: install.status === 0 ? 'PASS' : 'FAIL', exit_code: install.status };
-  if (install.status !== 0) return report;
+  if (install.status !== 0) {
+    return environmentWait(report, 'apk_install', report.logs.apk_install) ?? productFailure(report);
+  }
   run(adbExecutable, ['-s', device.id, 'shell', 'am', 'force-stop', packageName], { cwd: workspace });
   const launch = run(adbExecutable, ['-s', device.id, 'shell', 'monkey', '-p', packageName,
     '-c', 'android.intent.category.LAUNCHER', '1'], { cwd: workspace });
@@ -121,6 +290,10 @@ export function runAndroidDeviceGate({
   run(adbExecutable, ['-s', device.id, 'pull', remoteScreenshot, path.join(logDir, 'DEVICE_SCREEN.png')], { cwd: workspace });
   run(adbExecutable, ['-s', device.id, 'pull', remoteUi, path.join(logDir, 'DEVICE_UI.xml')], { cwd: workspace });
   report.status = Object.values(report.checks).every(check => check.status === 'PASS') ? 'PASS' : 'FAIL';
+  if (report.status !== 'PASS') {
+    return environmentWait(report, 'launch', `${report.logs.launch}\n${report.logs.logcat}`)
+      ?? productFailure(report);
+  }
   return report;
 }
 
