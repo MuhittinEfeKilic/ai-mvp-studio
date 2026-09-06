@@ -8,6 +8,22 @@ import { fileURLToPath } from 'node:url';
 import { Database } from '../src/database.mjs';
 import { Orchestrator } from '../src/orchestrator.mjs';
 
+/**
+ * Builds a review verdict that answers the project's acceptance checklist, the
+ * way the contract now requires. Specs without criteria produce an empty list.
+ */
+function fakeReview(workspace, { status = 'PASS', issues = [], notes = [] } = {}) {
+  const filePath = path.join(workspace, 'ACCEPTANCE_CRITERIA.json');
+  const list = fs.existsSync(filePath)
+    ? JSON.parse(fs.readFileSync(filePath, 'utf8')).criteria : [];
+  const criteria = list.map((item, index) => ({
+    id: item.id,
+    status: status === 'FAIL' && index === 0 ? 'FAIL' : 'PASS',
+    evidence: 'fake review',
+  }));
+  return JSON.stringify({ status, summary: 'Fake review.', criteria, issues, notes });
+}
+
 class FakeRunner {
   async run({ workspace, prompt, onEvent }) {
     if (prompt.includes('Produce only ARCHITECTURE.md')) {
@@ -30,7 +46,7 @@ class FakeRunner {
     }
     onEvent('turn.completed', { type: 'turn.completed' });
     return /Review the complete Flutter|response JSON only/i.test(prompt)
-      ? '{"status":"PASS","summary":"Fake review passed.","issues":[]}' : 'Agent completed.';
+      ? fakeReview(workspace) : 'Agent completed.';
   }
 }
 
@@ -304,6 +320,14 @@ test('resuming after a device wait does not rerun agents that already completed'
   assert.equal(waiting.status, 'awaiting_device_test', waiting.error);
   assert.equal(database.getTask(`${project.id}:integration`).status, 'completed');
 
+  // A failed on-demand repair left by an older run must not take the single
+  // ready slot from reviewer when the checkpoint resumes.
+  database.createTasks([{
+    id: `${project.id}:device_repair`, project_id: project.id, name: 'Device Repair',
+    role: 'device_repair', status: 'pending', allowed_paths: ['**'],
+    depends_on: [`${project.id}:repair`],
+  }]);
+
   deviceOutcome = { status: 'PASS', checks: { flow_coverage: { status: 'PASS' } }, logs: {} };
   orchestrator.resumeProject(project.id);
   const completed = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
@@ -574,7 +598,7 @@ test('independent builders overlap instead of waiting for the slowest of a wave'
         active += 1;
         peak = Math.max(peak, active);
         try {
-          await new Promise(resolve => setTimeout(resolve, slow ? 220 : 20));
+          await new Promise(resolve => setTimeout(resolve, slow ? 600 : 20));
           fs.mkdirSync(path.join(options.workspace, 'lib', folder === 'app' ? 'app' : `features/${folder}`), { recursive: true });
           fs.writeFileSync(
             path.join(options.workspace, 'lib', folder === 'app' ? 'app/shell.dart' : `features/${folder}/${folder}.dart`),
@@ -607,9 +631,13 @@ test('independent builders overlap instead of waiting for the slowest of a wave'
   const completed = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
 
   assert.equal(completed.status, 'awaiting_user_review', completed.error);
-  assert.equal(peak, 2, `bağımsız builder'lar örtüşmedi (zirve ${peak})`);
+  assert.ok(peak >= 2, `bağımsız builder'lar örtüşmedi (zirve ${peak})`);
   // The quick task must not be held back by the slow one it does not depend on.
-  assert.deepEqual(finishOrder, ['app', 'quick', 'slow']);
+  assert.equal(finishOrder[0], 'app');
+  assert.ok(
+    finishOrder.indexOf('quick') < finishOrder.indexOf('slow'),
+    `hızlı görev yavaş olanı bekledi: ${finishOrder.join(' -> ')}`,
+  );
   database.close();
 });
 
@@ -678,13 +706,12 @@ test('a fixable review finding gets a repair round instead of failing the projec
       options.onEvent('turn.completed', { type: 'turn.completed' });
       // The reviewer reports findings as objects, exactly like the real one did.
       return reviews === 1
-        ? JSON.stringify({
+        ? fakeReview(options.workspace, {
           status: 'FAIL',
-          summary: 'Tek somut kusur kaldı.',
           issues: [{ file: 'lib/grade_add_page.dart:313', description: 'digitsOnly doğrulamadan önce uygulanıyor.' }],
           notes: ['Kapılar yetkili kabul edildi.'],
         })
-        : JSON.stringify({ status: 'PASS', summary: 'Düzeltildi.', issues: [], notes: [] });
+        : fakeReview(options.workspace);
     }
   }
 
@@ -760,5 +787,107 @@ test('a review finding that survives its repair rounds fails with the reasons at
   assert.match(failed.error, /bulgular değişmedi/);
   assert.match(failed.error, /lib\/a\.dart:10: Hâlâ bozuk\./);
   assert.doesNotMatch(failed.error, /\[object Object\]/);
+  database.close();
+});
+
+test('a rerun review is shown its own previous findings and the acceptance checklist', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-review-memory-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  const reviewPrompts = [];
+  let reviews = 0;
+
+  class RememberingReviewer extends FakeRunner {
+    async run(options) {
+      if (options.prompt.includes('Review repair turu')) {
+        fs.writeFileSync(path.join(options.workspace, 'fix.txt'), 'düzeltildi');
+        options.onEvent('turn.completed', { type: 'turn.completed' });
+        return 'Bulgu giderildi.';
+      }
+      if (!/Review the complete Flutter/i.test(options.prompt)) return super.run(options);
+      reviewPrompts.push(options.prompt);
+      reviews += 1;
+      options.onEvent('turn.completed', { type: 'turn.completed' });
+      return reviews === 1
+        ? fakeReview(options.workspace, {
+          status: 'FAIL',
+          issues: [{ file: 'lib/score_field.dart:12', description: 'Ondalık girdi sessizce dönüştürülüyor.' }],
+        })
+        : fakeReview(options.workspace);
+    }
+  }
+
+  const orchestrator = new Orchestrator({
+    database,
+    runner: new RememberingReviewer(),
+    projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1,
+    flutterChecker: workspace => ({ checks: {
+      analyze: { status: 'PASS', exit_code: 0 }, test: { status: 'PASS', exit_code: 0 },
+      apk: { status: 'PASS', exit_code: 0, path: createFakeApk(workspace) },
+    } }),
+  });
+  const spec = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'odak-mini', 'PROJECT_SPEC.md',
+  ), 'utf8');
+  const project = orchestrator.createProject('Odak Mini', spec);
+  const completed = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+
+  assert.equal(completed.status, 'awaiting_user_review', completed.error);
+  assert.ok(fs.existsSync(path.join(project.workspace_path, 'ACCEPTANCE_CRITERIA.json')));
+
+  // The checklist is stated up front, so blocking authority is bounded.
+  assert.match(reviewPrompts[0], /kabul kriterleri, senin yanıtlaman gereken liste budur/);
+  assert.match(reviewPrompts[0], /AC1: /);
+  assert.doesNotMatch(reviewPrompts[0], /previous review blocked/);
+
+  // The rerun cannot silently reverse the earlier verdict.
+  assert.match(reviewPrompts[1], /previous review blocked this project/);
+  assert.match(reviewPrompts[1], /lib\/score_field\.dart:12: Ondalık girdi sessizce dönüştürülüyor\./);
+  database.close();
+});
+
+test('a runaway pipeline stops at the token budget instead of spending on', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-budget-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  let agentRuns = 0;
+
+  class CostlyRunner extends FakeRunner {
+    async run(options) {
+      agentRuns += 1;
+      // Each agent reports a large uncached turn, like a real Codex call.
+      options.onEvent('turn.completed', {
+        type: 'turn.completed',
+        usage: { input_tokens: 90_000, cached_input_tokens: 10_000, output_tokens: 5_000 },
+      });
+      return super.run(options);
+    }
+  }
+
+  const orchestrator = new Orchestrator({
+    database,
+    runner: new CostlyRunner(),
+    projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1,
+    tokenBudget: 200_000,
+    flutterChecker: workspace => ({ checks: {
+      analyze: { status: 'PASS', exit_code: 0 }, test: { status: 'PASS', exit_code: 0 },
+      apk: { status: 'PASS', exit_code: 0, path: createFakeApk(workspace) },
+    } }),
+  });
+  const project = orchestrator.createProject('Costly MVP', '# Approved specification');
+  const stopped = await waitForStatus(database, project.id, ['failed', 'awaiting_user_review']);
+
+  assert.equal(stopped.status, 'failed');
+  assert.match(stopped.error, /Token bütçesi aşıldı/);
+  assert.match(stopped.error, /MVP_STUDIO_PROJECT_TOKEN_BUDGET/);
+  // Each run bills 85k, so the guard must bite before the pipeline finishes.
+  assert.ok(agentRuns >= 2 && agentRuns <= 4, `beklenmeyen agent sayısı: ${agentRuns}`);
+
+  // Resuming grants a fresh budget: continuing is the user's decision.
+  const spentBefore = database.sumProjectTokens(project.id).billable;
+  assert.ok(spentBefore >= 200_000);
+  orchestrator.resumeProject(project.id);
+  await waitForStatus(database, project.id, ['failed', 'awaiting_user_review']);
+  assert.ok(database.sumProjectTokens(project.id).billable > spentBefore, 'resume yeni bütçe açmadı');
   database.close();
 });

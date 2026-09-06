@@ -100,23 +100,25 @@ export function renderQualityReportMarkdown(report) {
   ].join('\n');
 }
 
-export function parseReviewerResult(value) {
-  if (value && typeof value === 'object') return validateReviewerResult(value);
+export function parseReviewerResult(value, options = {}) {
+  if (value && typeof value === 'object') return validateReviewerResult(value, options);
   const text = String(value ?? '').trim();
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced?.[1] || text;
   try {
-    return validateReviewerResult(JSON.parse(candidate));
+    return validateReviewerResult(JSON.parse(candidate), options);
   } catch (error) {
     if (error?.code === 'INVALID_REVIEWER_RESULT') throw error;
     const structured = candidate.match(/^\s*(PASS|FAIL)\s*(?:[-—:]\s*(.*))?$/is);
     if (!structured) throw reviewerError('Reviewer çıktısı JSON veya tek satırlık PASS/FAIL olmalı.');
     const summary = structured[2] || '';
+    // The one-line form cannot answer a criteria checklist, so it is only valid
+    // when no checklist is expected.
     return validateReviewerResult({
       status: structured[1],
       summary,
       issues: /fail/i.test(structured[1]) ? [summary || 'Gerekçe bildirilmedi.'] : [],
-    });
+    }, options);
   }
 }
 
@@ -137,17 +139,52 @@ export function normalizeReviewerFindings(value) {
   }).filter(Boolean);
 }
 
-export function validateReviewerResult(raw = {}) {
+function normalizeCriteriaVerdicts(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(entry => ({
+    id: String(entry?.id ?? entry?.criterion ?? '').trim(),
+    status: normalizeStatus(entry?.status ?? entry?.result),
+    evidence: String(entry?.evidence ?? entry?.detail ?? entry?.description ?? '').trim(),
+  })).filter(entry => entry.id);
+}
+
+/**
+ * @param {object} raw parsed reviewer output
+ * @param {string[]} expectedCriteria acceptance criterion ids the review must answer
+ */
+export function validateReviewerResult(raw = {}, { expectedCriteria = [] } = {}) {
   const status = normalizeStatus(raw.status ?? raw.result);
   if (!['PASS', 'FAIL'].includes(status)) throw reviewerError('Reviewer status yalnızca PASS veya FAIL olabilir.');
   const issues = normalizeReviewerFindings(raw.issues);
   // Observations the reviewer could not verify belong here, not in issues.
   const notes = normalizeReviewerFindings(raw.notes);
+  const criteria = normalizeCriteriaVerdicts(raw.criteria);
+
+  if (expectedCriteria.length) {
+    const answered = new Set(criteria.map(entry => entry.id));
+    const missing = expectedCriteria.filter(id => !answered.has(id));
+    if (missing.length) {
+      throw reviewerError(`Reviewer şu kabul kriterlerini yanıtlamadı: ${missing.join(', ')}.`);
+    }
+    const invalid = criteria.filter(entry => !['PASS', 'FAIL'].includes(entry.status));
+    if (invalid.length) {
+      throw reviewerError(`Kabul kriteri sonucu PASS veya FAIL olmalı: ${invalid.map(e => e.id).join(', ')}.`);
+    }
+    // A blocking verdict must point at a criterion; anything else is a note.
+    const failed = criteria.filter(entry => entry.status === 'FAIL').map(entry => entry.id);
+    if (status === 'FAIL' && !failed.length) {
+      throw reviewerError('FAIL sonucu en az bir kabul kriterini FAIL olarak işaretlemelidir.');
+    }
+    if (status === 'PASS' && failed.length) {
+      throw reviewerError(`PASS sonucu FAIL kriter içeremez: ${failed.join(', ')}.`);
+    }
+  }
+
   if (status === 'PASS' && issues.length) throw reviewerError('PASS reviewer sonucu engelleyici issue içeremez.');
   if (status === 'FAIL' && !issues.length) {
     throw reviewerError('FAIL reviewer sonucu en az bir engelleyici issue bildirmelidir.');
   }
-  return { status, summary: String(raw.summary || raw.message || ''), issues, notes };
+  return { status, summary: String(raw.summary || raw.message || ''), issues, notes, criteria };
 }
 
 function reviewerError(message) {

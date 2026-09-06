@@ -68,6 +68,23 @@ export function parseCriticalUserFlows(markdown) {
   });
 }
 
+/**
+ * Turns the spec's acceptance criteria into an identified checklist. The reviewer
+ * may only block on these, which keeps its verdict comparable between runs
+ * instead of depending on what it happened to notice.
+ */
+export function parseAcceptanceCriteria(markdown) {
+  const { sections } = parseSpec(markdown);
+  const content = sections.get(normalize('Kabul Kriterleri')) || '';
+  return content.split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /^[-*]\s+\S/.test(line))
+    // Specs are often written as task lists; the checkbox is not part of the criterion.
+    .map(line => line.replace(/^[-*]\s+/, '').replace(/^\[[ xX]\]\s*/, '').trim())
+    .filter(Boolean)
+    .map((text, index) => ({ id: `AC${index + 1}`, text }));
+}
+
 export function validateSpec(markdown) {
   const { metadata, sections, text } = parseSpec(markdown);
   const blocking_issues = [];

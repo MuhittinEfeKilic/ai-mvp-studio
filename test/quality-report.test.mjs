@@ -66,11 +66,11 @@ test('quality report renders stable JSON and readable Markdown', () => {
 test('reviewer result accepts structured JSON or explicit PASS/FAIL only', () => {
   assert.deepEqual(
     parseReviewerResult('```json\n{"status":"PASS","summary":"Uygun","notes":["küçük not"]}\n```'),
-    { status: 'PASS', summary: 'Uygun', issues: [], notes: ['küçük not'] },
+    { status: 'PASS', summary: 'Uygun', issues: [], notes: ['küçük not'], criteria: [] },
   );
   // A one-line FAIL carries its reason as the single blocking issue.
   assert.deepEqual(parseReviewerResult('FAIL — Buton bozuk'), {
-    status: 'FAIL', summary: 'Buton bozuk', issues: ['Buton bozuk'], notes: [],
+    status: 'FAIL', summary: 'Buton bozuk', issues: ['Buton bozuk'], notes: [], criteria: [],
   });
   assert.throws(() => parseReviewerResult('Looks good to me'), /PASS\/FAIL/);
   assert.throws(() => parseReviewerResult({ status: 'PASS', issues: ['broken'] }), /issue içeremez/);
@@ -79,4 +79,43 @@ test('reviewer result accepts structured JSON or explicit PASS/FAIL only', () =>
     () => parseReviewerResult({ status: 'FAIL', summary: 'kanıt yok', notes: ['cihazda bakılmadı'] }),
     /en az bir engelleyici issue/,
   );
+});
+
+test('the review may only block on the acceptance checklist it answered', () => {
+  const expectedCriteria = ['AC1', 'AC2'];
+  const answer = (status, criteria, extra = {}) => parseReviewerResult(
+    { status, summary: 'x', criteria, ...extra }, { expectedCriteria },
+  );
+
+  // Every criterion has to be answered, so a verdict is comparable across runs.
+  assert.throws(
+    () => answer('PASS', [{ id: 'AC1', status: 'PASS' }]),
+    /yanıtlamadı: AC2/,
+  );
+  const passing = answer('PASS', [
+    { id: 'AC1', status: 'PASS', evidence: 'integration_test/a_test.dart' },
+    { id: 'AC2', status: 'PASS', evidence: 'TEST_REPORT.json' },
+  ]);
+  assert.equal(passing.status, 'PASS');
+  assert.equal(passing.criteria.length, 2);
+
+  // Blocking without failing a criterion is exactly the drift this prevents.
+  assert.throws(
+    () => answer('FAIL', [
+      { id: 'AC1', status: 'PASS' }, { id: 'AC2', status: 'PASS' },
+    ], { issues: ['stil önerisi'] }),
+    /en az bir kabul kriterini FAIL/,
+  );
+  assert.throws(
+    () => answer('PASS', [
+      { id: 'AC1', status: 'FAIL' }, { id: 'AC2', status: 'PASS' },
+    ]),
+    /PASS sonucu FAIL kriter içeremez: AC1/,
+  );
+
+  const blocking = answer('FAIL', [
+    { id: 'AC1', status: 'FAIL', evidence: 'lib/a.dart:10' }, { id: 'AC2', status: 'PASS' },
+  ], { issues: [{ criterion: 'AC1', file: 'lib/a.dart:10', description: 'Kaydetmiyor.' }] });
+  assert.equal(blocking.status, 'FAIL');
+  assert.deepEqual(blocking.issues, ['lib/a.dart:10: Kaydetmiyor.']);
 });

@@ -183,7 +183,7 @@ Stok girişi ve satış aynı SQLite transaction içinde ürün stoğunu güncel
 
 # Kabul Kriterleri
 
-- [ ] Dört kritik akış Flutter integration test olarak LDPlayer’da geçer.
+- [ ] Dört kritik akış Flutter integration test olarak Android Studio AVD’de geçer.
 - [ ] Ürün, stok ve satış gerçek SQLite repository üzerinden çalışır.
 - [ ] Yetersiz stokta stok ve hareket tablosu değişmez.
 - [ ] Uygulama yeniden açıldığında tüm veriler korunur.
@@ -192,7 +192,7 @@ Stok girişi ve satış aynı SQLite transaction içinde ürün stoğunu güncel
 - [ ] Geçersiz ve duplicate alanlar anlaşılır Türkçe mesajlarla reddedilir.
 - [ ] Hatalar yutulmaz ve debug logunda kök neden bulunur.
 - [ ] Analyze, unit/widget ve cihaz integration testleri başarılıdır.
-- [ ] APK LDPlayer’a kurulur, açılır ve logcat fatal hata içermez.
+- [ ] APK Android Studio AVD’ye kurulur, açılır ve logcat fatal hata içermez.
 
 # Kalite Gereksinimleri
 

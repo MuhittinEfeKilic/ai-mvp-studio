@@ -17,7 +17,7 @@ import {
 } from './quality-report.mjs';
 import { parseEmulatorList, probeBuildTools } from './android-environment.mjs';
 import { runSourceDiagnostics } from './source-diagnostics.mjs';
-import { parseCriticalUserFlows, parseSpec } from './spec-validator.mjs';
+import { parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec } from './spec-validator.mjs';
 
 function git(workspace, args, options = {}) {
   const result = spawnSync('git', args, {
@@ -180,6 +180,8 @@ class PauseError extends Error {
 
 class DeviceWaitError extends Error {}
 
+class BudgetError extends Error {}
+
 const taskId = (projectId, key) => `${projectId}:${key}`;
 
 /** Device rounds rebuild the APK and rerun the emulator, so they stay expensive. */
@@ -226,7 +228,8 @@ class Semaphore {
 export class Orchestrator {
   constructor({
     database, runner, projectsDir, maxConcurrentRuns = 2, flutterChecker = null,
-    deviceTester = null, maxConcurrentAgents = 3, maxParallelBuilders = 3,
+    deviceTester = null, maxConcurrentAgents = 3, maxParallelBuilders = 3, tokenBudget = 0,
+    deviceMinFreeMb = 1536,
   }) {
     this.database = database;
     this.runner = runner;
@@ -238,6 +241,10 @@ export class Orchestrator {
     this.activeRuns = 0;
     this.queue = [];
     this.busyProjects = new Set();
+    this.tokenBudget = tokenBudget;
+    this.deviceMinFreeMb = deviceMinFreeMb;
+    // Budget is per uninterrupted run: resuming is the user deciding to spend more.
+    this.budgetBaseline = new Map();
     // Project and builder parallelism multiply; this caps the real Codex process
     // count across every project regardless of how those two are configured.
     this.agentSlots = new Semaphore(maxConcurrentAgents);
@@ -246,6 +253,22 @@ export class Orchestrator {
   /** True while a project is queued or executing; two runs would share a worktree. */
   #isBusy(projectId) {
     return this.busyProjects.has(projectId) || this.queue.some(job => job.id === projectId);
+  }
+
+  /**
+   * Stops a runaway pipeline before it starts another agent. Checked between
+   * agents rather than mid-call, because killing a running Codex loses its work.
+   */
+  #assertWithinBudget(projectId) {
+    if (!this.tokenBudget) return;
+    const baseline = this.budgetBaseline.get(projectId) ?? 0;
+    const spent = this.database.sumProjectTokens(projectId).billable - baseline;
+    if (spent < this.tokenBudget) return;
+    throw new BudgetError(
+      `Token bütçesi aşıldı: bu çalışmada ${spent.toLocaleString('tr-TR')} faturalanabilir token `
+      + `harcandı, sınır ${this.tokenBudget.toLocaleString('tr-TR')}. Devam ettirmek yeni bir bütçe `
+      + 'başlatır; sınırı MVP_STUDIO_PROJECT_TOKEN_BUDGET ile değiştirebilirsiniz.',
+    );
   }
 
   #assertNotBusy(projectId) {
@@ -272,9 +295,16 @@ export class Orchestrator {
         version: 1, profile: 'flutter_mobile', flows: criticalFlows,
       }, null, 2)}\n`, 'utf8');
     }
+    const acceptanceCriteria = parseAcceptanceCriteria(specContent);
+    if (acceptanceCriteria.length) {
+      fs.writeFileSync(path.join(workspace, 'ACCEPTANCE_CRITERIA.json'), `${JSON.stringify({
+        version: 1, criteria: acceptanceCriteria,
+      }, null, 2)}\n`, 'utf8');
+    }
     ensureProjectGitignore(workspace);
     git(workspace, ['add', 'PROJECT_SPEC.md', '.gitignore']);
     if (criticalFlows.length) git(workspace, ['add', 'USER_FLOWS.json']);
+    if (acceptanceCriteria.length) git(workspace, ['add', 'ACCEPTANCE_CRITERIA.json']);
     git(workspace, ['commit', '-m', 'docs: add approved project specification']);
 
     const project = {
@@ -303,6 +333,10 @@ export class Orchestrator {
     this.database.updateProject(id, { status: 'queued', error: null });
     for (const task of this.database.listTasks(id)) {
       if (['ready', 'running', 'validating', 'paused_context', 'paused_usage', 'interrupted', 'failed'].includes(task.status)) {
+        // On-demand repair nodes must not compete with the normal reviewer when
+        // a full pipeline resumes. The corresponding gate explicitly resets
+        // them to pending only when a new repair is actually required.
+        if (task.status === 'failed' && ['device_repair', 'review_repair'].includes(task.role)) continue;
         this.database.updateTask(task.id, { status: 'pending', error: null });
       }
     }
@@ -392,8 +426,15 @@ export class Orchestrator {
     const expected = new Set(keys.map(key => taskId(projectId, key))
       .filter(id => tasks.find(task => task.id === id)?.status !== 'completed'));
     if (!expected.size) return [];
-    const selected = selectReadyTasks(tasks, { capacity })
-      .filter(task => expected.has(task.id));
+    // Readiness needs the complete graph for dependency evaluation, but the
+    // capacity limit belongs only to the tasks requested by this pipeline step.
+    // Applying capacity first lets an unrelated on-demand repair consume the
+    // reviewer slot and produces a false "dependencies not ready" failure.
+    const scopedTasks = tasks.map(task => (
+      expected.has(task.id) || !['pending', 'ready'].includes(task.status)
+        ? task : { ...task, status: 'blocked' }
+    ));
+    const selected = selectReadyTasks(scopedTasks, { capacity });
     if (selected.length !== expected.size) {
       throw new Error(`Görev bağımlılıkları hazır değil: ${keys.join(', ')}`);
     }
@@ -401,6 +442,7 @@ export class Orchestrator {
   }
 
   async #runAgent(options) {
+    this.#assertWithinBudget(options.projectId);
     await this.agentSlots.acquire();
     try {
       return await this.#runAgentWithSlot(options);
@@ -530,7 +572,7 @@ export class Orchestrator {
       if (!fs.existsSync(planPath)) {
         await this.#runAgent({
           projectId, taskKey: 'coordinator', agentName: 'Coordinator Agent', role: 'coordinator', workspace,
-          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md and UX_SPEC.md. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. No task may claim pubspec.yaml or pubspec.lock. Create 2 to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum and the plan is rejected above it, so do not over-split the MVP. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, coordinator, integration, test, repair or reviewer. The plan is rejected unless at least two tasks are independent of each other, so avoid a single foundation task that everything else depends on. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow to a builder and require an integration_test/<flow-name>_test.dart output that exercises the real feature boundaries and persistent data path. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
+          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md and UX_SPEC.md. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create 2 to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum and the plan is rejected above it, so do not over-split the MVP. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, coordinator, integration, test, repair or reviewer. The plan is rejected unless at least two tasks are independent of each other, so avoid a single foundation task that everything else depends on. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow to a builder and require an integration_test/<flow-name>_test.dart output that exercises the real feature boundaries and persistent data path. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
         });
         this.#commitArtifact(workspace, 'TASK_PLAN.json', 'docs: add coordinated task plan');
       }
@@ -698,6 +740,27 @@ export class Orchestrator {
   }
 
   /**
+   * The device gate runs `flutter test integration_test`, which needs the SDK's
+   * integration_test package. `flutter create` does not add it, and adding it from
+   * pub.dev pulls an unrelated pre null-safety package, so it is installed here
+   * from the SDK. Idempotent: projects scaffolded earlier get it on resume.
+   */
+  #ensureIntegrationTestDependency(workspace) {
+    const pubspec = path.join(workspace, 'pubspec.yaml');
+    if (!fs.existsSync(pubspec)) return false;
+    if (/^\s*integration_test\s*:/m.test(fs.readFileSync(pubspec, 'utf8'))) return false;
+    const flutter = resolveFlutter(workspace);
+    if (!flutter) return false;
+    const result = runFlutter(flutter, ['pub', 'add', 'dev:integration_test', '--sdk=flutter'], workspace);
+    if (result.status !== 0) {
+      throw new Error(`integration_test bağımlılığı kurulamadı: ${commandDetails(result)}`);
+    }
+    git(workspace, ['add', '-A']);
+    if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: add integration_test dependency']);
+    return true;
+  }
+
+  /**
    * Warms the Android toolchain while the planning agents think. A cold Gradle
    * build measured 177.7s against 1.8s for analyze, so hiding it behind the
    * Architecture/UX/Coordinator window removes it from the critical path.
@@ -740,7 +803,7 @@ export class Orchestrator {
     if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: install planned dependencies']);
   }
 
-  #runFlutterPreflight(projectId, workspace) {
+  async #runFlutterPreflight(projectId, workspace) {
     const flutter = resolveFlutter(workspace);
     const androidSdk = [
       process.env.ANDROID_HOME,
@@ -760,9 +823,9 @@ export class Orchestrator {
       report.flutter.details = commandDetails(version);
       report.emulators = parseEmulatorList(fullCommandOutput(runFlutter(flutter, ['emulators'], workspace)));
     }
-    report.build_tools = probeBuildTools({
+    report.build_tools = await probeBuildTools({
       sdkRoot: androidSdk,
-      run: (executable, args) => runFlutter(executable, args, workspace),
+      run: async (executable, args) => runFlutter(executable, args, workspace),
     });
     report.status = report.flutter.status === 'PASS' && report.android_sdk.status === 'PASS'
       && report.build_tools.status !== 'FAIL'
@@ -866,7 +929,8 @@ export class Orchestrator {
       ? await this.deviceTester({ workspace, apkPath, packageName, flows })
       : await runAndroidDeviceGate({
         workspace, apkPath, packageName, flows,
-        flutterExecutable: resolveFlutter(workspace), adbExecutable: resolveAdb(),
+        flutterExecutable: resolveFlutter(workspace), adbExecutable: await resolveAdb(),
+        minimumFreeMb: this.deviceMinFreeMb,
       });
     writeDeviceReport(workspace, report);
     this.database.updateProject(projectId, { device_report: JSON.stringify(report) });
@@ -1020,7 +1084,7 @@ export class Orchestrator {
       const review = await this.#startReviewer(id, workspace);
       if (review.error) throw review.error;
       const reviewerMessage = review.message;
-      const reviewerResult = parseReviewerResult(reviewerMessage);
+      const reviewerResult = parseReviewerResult(reviewerMessage, this.#reviewOptions(workspace));
       if (reviewerResult.status !== 'PASS') {
         const reasons = reviewerResult.issues.map(issue => `- ${issue}`).join('\n')
           || reviewerResult.summary || 'Gerekçe bildirilmedi.';
@@ -1060,18 +1124,64 @@ export class Orchestrator {
   #persistReview(projectId, workspace, review) {
     if (!review?.message) return;
     try {
-      if (parseReviewerResult(review.message).status !== 'PASS') return;
+      if (parseReviewerResult(review.message, this.#reviewOptions(workspace)).status !== 'PASS') return;
     } catch {
       return;
     }
     this.#completeTask(projectId, taskId(projectId, 'reviewer'), workspace, review.message);
   }
 
+  /** Criterion ids the review must answer, threaded into the verdict contract. */
+  #reviewOptions(workspace) {
+    return { expectedCriteria: this.#acceptanceCriteria(workspace).map(item => item.id) };
+  }
+
+  /** The acceptance checklist the review may block on; empty for older projects. */
+  #acceptanceCriteria(workspace) {
+    const filePath = path.join(workspace, 'ACCEPTANCE_CRITERIA.json');
+    if (!fs.existsSync(filePath)) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      return Array.isArray(parsed.criteria) ? parsed.criteria : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Blocking findings from the most recent review, so a rerun cannot silently
+   * reverse itself. One run once blocked a defect and the next passed the very
+   * same code without ever seeing the earlier verdict.
+   */
+  #previousReviewFindings(projectId) {
+    const previous = this.database.listAgentRuns(projectId)
+      .filter(run => run.role === 'reviewer' && run.final_message).at(-1);
+    if (!previous) return [];
+    try {
+      const verdict = parseReviewerResult(previous.final_message);
+      return verdict.status === 'PASS' ? [] : verdict.issues;
+    } catch {
+      return [];
+    }
+  }
+
   /** Starts the read-only review; the caller decides when to settle it. */
   #startReviewer(projectId, workspace) {
+    const criteria = this.#acceptanceCriteria(workspace);
+    const checklist = criteria.length
+      ? `\n\nPROJECT_SPEC.md kabul kriterleri, senin yanıtlaman gereken liste budur:\n${
+        criteria.map(item => `${item.id}: ${item.text}`).join('\n')
+      }\n\nAnswer every one of them in "criteria" as {"id","status","evidence"}, where evidence names the file, test or report that settles it. You may block ONLY on these criteria: every blocking issue must belong to a criterion you marked FAIL. Anything outside this list — however reasonable — goes to "notes" and never changes the status.`
+      : '';
+    const previous = this.#previousReviewFindings(projectId);
+    const history = previous.length
+      ? `\n\nYour previous review blocked this project with the findings below. For each one state in "notes" whether it is now resolved (and where) or still present. If you now consider a previous finding to have been wrong, say so explicitly and why; do not silently drop it:\n${
+        previous.map(issue => `- ${issue}`).join('\n')
+      }`
+      : '';
     return this.#runAgent({
       projectId, taskKey: 'reviewer', agentName: 'Mobile Reviewer Agent', role: 'reviewer', workspace,
-      prompt: `Review the complete Flutter mobile MVP against PROJECT_SPEC.md and USER_FLOWS.json without modifying files.
+      prompt: `Review the complete Flutter mobile MVP against PROJECT_SPEC.md and USER_FLOWS.json without modifying files.${checklist}${history}
 
 Authoritative gates already ran and you must not re-judge them: TEST_REPORT.json owns flutter analyze, flutter test, the debug APK build and the swallowed-error scan; DEVICE_REPORT.json owns execution on the Android device. A PASS in those reports is proof. An Android emulator satisfies the device_test requirement; do not ask for physical hardware. If DEVICE_REPORT.json is absent the device gate simply has not run yet, which is never your finding to report.
 
@@ -1081,7 +1191,7 @@ Your job is what no gate can check: does the implementation actually satisfy PRO
 
 A finding is blocking ONLY if it is a demonstrable defect you can point at in a specific file. Something you could not verify is not a defect: put it in "notes", never in "issues". Missing evidence for a UX_SPEC.md suggestion is a note; UX_SPEC.md is guidance, PROJECT_SPEC.md is the contract. Return FAIL only when "issues" is non-empty.
 
-Your final response must be JSON only: {"status":"PASS","summary":"...","issues":[],"notes":[]} or the same shape with "FAIL".`,
+Your final response must be JSON only, in this shape: {"status":"PASS","summary":"...","criteria":[{"id":"AC1","status":"PASS","evidence":"..."}],"issues":[{"criterion":"AC1","file":"lib/x.dart:12","description":"..."}],"notes":["..."]}`,
     }).then(message => ({ message }), error => ({ error }));
   }
 
@@ -1096,16 +1206,18 @@ Your final response must be JSON only: {"status":"PASS","summary":"...","issues"
   }
 
   async #execute({ id, projectRoot, workspace, feedbackRepair = false }) {
+    this.budgetBaseline.set(id, this.database.sumProjectTokens(id).billable);
     if (feedbackRepair) return this.#executeFeedbackRepair({ id, workspace });
     this.database.updateProject(id, { status: 'planning', error: null });
     try {
       ensureProjectGitignore(workspace);
       let warmBuild = null;
       if (!this.flutterChecker) {
-        this.#runFlutterPreflight(id, workspace);
+        await this.#runFlutterPreflight(id, workspace);
         // Scaffold before the worktrees branch, so every agent starts from the
         // same committed skeleton, then hide the cold Gradle build behind them.
         this.#scaffoldApplication(id, workspace);
+        this.#ensureIntegrationTestDependency(workspace);
         warmBuild = this.#startWarmBuild(id, workspace);
       }
       const architectureWorkspace = this.#createWorktree(workspace, projectRoot, 'architecture');
@@ -1282,7 +1394,7 @@ Your final response must be JSON only: {"status":"PASS","summary":"...","issues"
           git(workspace, ['add', '-A']);
           if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: record review state']);
 
-          const verdict = parseReviewerResult(reviewerMessage);
+          const verdict = parseReviewerResult(reviewerMessage, this.#reviewOptions(workspace));
           if (verdict.status === 'PASS') break;
 
           const findings = verdict.issues.map(issue => `- ${issue}`).join('\n');
@@ -1328,7 +1440,7 @@ Your final response must be JSON only: {"status":"PASS","summary":"...","issues"
         }
         this.#completeTask(id, 'reviewer', workspace, reviewerMessage);
       }
-      const reviewerResult = parseReviewerResult(reviewerMessage);
+      const reviewerResult = parseReviewerResult(reviewerMessage, this.#reviewOptions(workspace));
 
       this.database.updateProject(id, {
         status: 'awaiting_user_review', final_message: reviewerResult.summary || reviewerMessage,

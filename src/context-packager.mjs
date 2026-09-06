@@ -14,8 +14,8 @@ const ROLE_DOCUMENTS = Object.freeze({
   device_repair: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'DEVICE_REPORT.json', 'TEST_REPORT.json', 'PROJECT_STATE.json'],
   review_repair: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'TEST_REPORT.json', 'PROJECT_STATE.json'],
   reviewer: [
-    'PROJECT_SPEC.md', 'USER_FLOWS.json', 'UX_SPEC.md', 'TEST_REPORT.md', 'TEST_REPORT.json',
-    'DEVICE_REPORT.json', 'PROJECT_STATE.json',
+    'PROJECT_SPEC.md', 'ACCEPTANCE_CRITERIA.json', 'USER_FLOWS.json', 'UX_SPEC.md',
+    'TEST_REPORT.md', 'TEST_REPORT.json', 'DEVICE_REPORT.json', 'PROJECT_STATE.json',
   ],
 });
 

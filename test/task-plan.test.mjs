@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { taskGraphWidth, validateTaskPlan } from '../src/task-plan.mjs';
+import {
+  normalizePackageDependencies, taskGraphWidth, validateTaskPlan,
+} from '../src/task-plan.mjs';
 
 test('task plan normalizes a valid Flutter task graph', () => {
   const plan = validateTaskPlan({ tasks: [
@@ -78,4 +80,16 @@ test('a cyclic plan is reported instead of deadlocking the scheduler', () => {
   const plan = parallelPlan();
   plan.tasks[0].depends_on = ['inventory'];
   assert.throws(() => validateTaskPlan(plan), /döngüsel bağımlılık/);
+});
+
+test('Flutter SDK packages are never installed from pub.dev', () => {
+  // `flutter pub add integration_test` resolves an unrelated pre null-safety
+  // package and breaks version solving; the scaffold provides the SDK one.
+  assert.deepEqual(
+    normalizePackageDependencies(['sqflite', 'integration_test', 'path', 'flutter_test', 'flutter']),
+    ['sqflite', 'path'],
+  );
+  const plan = parallelPlan();
+  plan.dependencies = ['integration_test', 'sqflite', 'sqflite'];
+  assert.deepEqual(validateTaskPlan(plan).dependencies, ['sqflite']);
 });

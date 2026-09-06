@@ -98,11 +98,17 @@ Verilerin nerede saklanacağını, ilişkileri, silme davranışını ve örnek 
 
 # Kabul Kriterleri
 
-- [ ] Kullanıcı ana akışı baştan sona tamamlayabilir.
-- [ ] Zorunlu alanlar doğrulanır ve anlaşılır hata mesajı gösterilir.
-- [ ] Sayfa yenilendiğinde kalıcı olması gereken veriler korunur.
-- [ ] Mobil genişlikte yatay taşma oluşmaz.
-- [ ] Kapsam dışı özellikler uygulanmaz.
+Bu bölümdeki her madde `ACCEPTANCE_CRITERIA.json` içine `AC1..ACn` olarak yazılır ve
+Mobile Reviewer her birini kanıtıyla yanıtlamak zorundadır. Reviewer **yalnız** bu
+maddeler üzerinden bloklayabilir, dolayısıyla maddeler gözlemlenebilir ürün davranışı
+anlatmalıdır. `flutter analyze`, `flutter test`, APK üretimi ve cihaz koşusu gibi
+toolchain sonuçlarını buraya yazmayın; onların sahibi kalite ve cihaz kapılarıdır.
+
+- Kullanıcı ana akışı baştan sona tamamlayabilir.
+- Zorunlu alanlar doğrulanır ve anlaşılır hata mesajı gösterilir.
+- Sayfa yenilendiğinde kalıcı olması gereken veriler korunur.
+- Mobil genişlikte yatay taşma oluşmaz.
+- Kapsam dışı özellikler uygulanmaz.
 
 # Kalite Gereksinimleri
 

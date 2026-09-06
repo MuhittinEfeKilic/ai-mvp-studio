@@ -25,6 +25,12 @@ Claude entegrasyonu henüz kapsam dışıdır.
   orchestrator merkezi olarak çalıştırır.
 - Bir projeyi yalnız analyze/test/APK PASS olduğu için kullanıcı akışları çalışıyor
   kabul etmeyin. Cihaz/E2E doğrulaması yapılmadıysa bunu açıkça belirtin.
+- Kapılar yetkilidir: `TEST_REPORT.json` ve `DEVICE_REPORT.json` sonuçları yeniden
+  yargılanmaz. Reviewer yalnız `ACCEPTANCE_CRITERIA.json` maddeleri üzerinden
+  bloklayabilir; doğrulanamayan gözlem `notes` alanına yazılır.
+- `src/*.mjs` değiştikten sonra çalışan panel sunucusu yeniden başlatılmadan
+  değişiklik devreye girmez; bir düzeltmeyi "işe yaramadı" diye değerlendirmeden
+  önce bunu doğrulayın.
 
 ## Standart çalışma sırası
 
@@ -44,7 +50,10 @@ Claude entegrasyonu henüz kapsam dışıdır.
 - Kalıcılık: `src/database.mjs`
 - Spec ve task sözleşmeleri: `src/spec-validator.mjs`, `src/task-plan.mjs`
 - Paralellik/path izolasyonu: `src/task-scheduler.mjs`, `src/task-worktree.mjs`
-- Kalite sözleşmesi: `src/quality-report.mjs`
+- Kalite ve inceleme sözleşmesi: `src/quality-report.mjs`
+- Kaynak teşhis taraması: `src/source-diagnostics.mjs`
+- Cihaz kapısı: `src/device-tester.mjs`, `src/android-environment.mjs`
+- Rol bazlı context: `src/context-packager.mjs`
 
 Yeni davranış mümkünse saf, export edilen bir yardımcı fonksiyonla ayrıştırılmalı ve
 Node yerleşik test koşucusuyla regresyon testi eklenmelidir. Harici bağımlılık

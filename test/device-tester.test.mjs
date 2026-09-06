@@ -11,10 +11,13 @@ import {
   validateFlowCoverage,
 } from '../src/device-tester.mjs';
 
-test('ADB candidates prefer explicit configuration and include LDPlayer on Windows', () => {
+const successfulWipe = async () => ({ status: 'PASS', avd_name: 'Test_AVD', details: 'temizlendi' });
+
+test('ADB candidates prefer explicit configuration and never include LDPlayer', () => {
   const candidates = adbCandidates({ ADB_BIN: 'D:\\tools\\adb.exe', LOCALAPPDATA: 'C:\\Local' }, 'win32');
   assert.equal(candidates[0], 'D:\\tools\\adb.exe');
-  assert.ok(candidates.includes('C:\\LDPlayer\\LDPlayer9\\adb.exe'));
+  assert.ok(candidates.includes('C:\\Local\\Android\\Sdk\\platform-tools\\adb.exe'));
+  assert.ok(!candidates.some(candidate => /LDPlayer/i.test(candidate)));
 });
 
 test('ADB device output excludes offline devices from ready selection', () => {
@@ -52,17 +55,45 @@ test('device gate runs integration, installs APK, launches app and rejects fatal
   const run = (command, args) => {
     if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
     if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+    if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
     if (args.includes('pidof')) return { status: 0, stdout: '1234\n' };
     if (args.includes('logcat') && args.includes('-d')) return { status: 0, stdout: 'Application started' };
     return { status: 0, stdout: command === 'flutter' ? 'All tests passed' : 'Success' };
   };
   const report = await runAndroidDeviceGate({
     workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}],
-    flutterExecutable: 'flutter', adbExecutable: 'adb', run,
+    flutterExecutable: 'flutter', adbExecutable: 'adb', run, wipeDevice: successfulWipe,
   });
   assert.equal(report.status, 'PASS');
   assert.equal(report.checks.integration_test.status, 'PASS');
   assert.equal(report.checks.launch.process_id, '1234');
+});
+
+test('device gate runs integration files separately and reports the timed-out file', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-timeout-'));
+  fs.mkdirSync(path.join(workspace, 'integration_test'));
+  fs.writeFileSync(path.join(workspace, 'integration_test', 'a_test.dart'), 'void main() {}');
+  fs.writeFileSync(path.join(workspace, 'integration_test', 'b_test.dart'), 'void main() {}');
+  const flutterCalls = [];
+  const report = await runAndroidDeviceGate({
+    workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}, {}],
+    flutterExecutable: 'flutter', adbExecutable: 'adb', wipeDevice: successfulWipe,
+    run: (command, args, options = {}) => {
+      if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
+      if (command === 'flutter') {
+        flutterCalls.push({ args, timeout: options.timeout });
+        if (args.some(arg => arg.endsWith('b_test.dart'))) return { status: null, stdout: '', stderr: 'DEVICE_TEST_TIMEOUT', timedOut: true };
+      }
+      return { status: 0, stdout: 'Success', stderr: '' };
+    },
+  });
+  assert.equal(report.status, 'WAITING');
+  assert.equal(report.checks.integration_test.failed_file, 'integration_test/b_test.dart');
+  assert.equal(report.checks.integration_test.timed_out, true);
+  assert.equal(report.checks.integration_test.completed_files.length, 1);
+  assert.deepEqual(flutterCalls.map(call => call.timeout), [180_000, 180_000]);
 });
 
 test('device failure description names the check that actually failed', () => {
@@ -132,10 +163,11 @@ test('device gate waits instead of failing when the emulator breaks mid-run', as
   fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
   const gate = integrationOutput => runAndroidDeviceGate({
     workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}],
-    flutterExecutable: 'flutter', adbExecutable: 'adb',
+    flutterExecutable: 'flutter', adbExecutable: 'adb', wipeDevice: successfulWipe,
     run: (command, args) => {
       if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
       if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
       if (command === 'flutter') return { status: 1, stdout: integrationOutput };
       return { status: 0, stdout: '' };
     },

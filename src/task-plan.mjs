@@ -165,6 +165,16 @@ export function validateTaskPlan(rawPlan, { maxTasks = 5 } = {}) {
   };
 }
 
+/**
+ * Packages that ship with the Flutter SDK. `flutter pub add <name>` would resolve
+ * them from pub.dev instead, where `integration_test` is an unrelated, pre
+ * null-safety package that breaks version solving. The scaffold provides these.
+ */
+const SDK_PACKAGES = new Set([
+  'flutter', 'flutter_test', 'flutter_driver', 'flutter_localizations',
+  'flutter_web_plugins', 'integration_test',
+]);
+
 /** Package names the orchestrator installs with `flutter pub add` before building. */
 export function normalizePackageDependencies(value) {
   const entries = Array.isArray(value) ? value : [];
@@ -174,7 +184,7 @@ export function normalizePackageDependencies(value) {
     .filter(entry => /^[a-z_][a-z0-9_]*(?::\s*\S+)?$/i.test(entry))
     .filter(entry => {
       const name = entry.split(':')[0].trim();
-      if (seen.has(name)) return false;
+      if (SDK_PACKAGES.has(name) || seen.has(name)) return false;
       seen.add(name);
       return true;
     });

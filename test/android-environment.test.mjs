@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
   compareBuildToolsVersions, ensureBootedDevice, isBootCompleted, isPrereleaseBuildTools,
-  parseEmulatorList, probeBuildTools,
+  parseAvailableDataKb, parseEmulatorList, prepareDeviceForTest, probeBuildTools, wipeAvdAfterTest,
 } from '../src/android-environment.mjs';
 
 const CONNECTED = 'List of devices attached\nemulator-5554 device product:sdk\n';
@@ -30,6 +33,71 @@ test('boot completion is only accepted for the exact property value', () => {
   assert.equal(isBootCompleted('Success'), false);
 });
 
+test('AVD data capacity is parsed and insufficient storage stops before testing', async () => {
+  const df = 'Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/block/dm-8 6291456 5767168 524288 92% /data\n';
+  assert.equal(parseAvailableDataKb(df), 524288);
+  const calls = [];
+  const result = await prepareDeviceForTest({
+    adb: 'adb', device: 'emulator-5554', packageName: 'com.example.app', minimumFreeMb: 1024,
+    run: async (_command, args) => {
+      calls.push(args.join(' '));
+      return args.includes('df') ? { status: 0, stdout: df } : { status: 0, stdout: 'Success' };
+    },
+  });
+  assert.equal(result.status, 'WAITING');
+  assert.equal(result.free_mb, 512);
+  assert.match(result.reason, /512 MB boş, en az 1024 MB/);
+  assert.ok(calls[0].includes('uninstall com.example.app'));
+});
+
+test('AVD preparation removes only the target package and accepts healthy storage', async () => {
+  const calls = [];
+  const result = await prepareDeviceForTest({
+    adb: 'adb', device: 'emulator-5554', packageName: 'com.example.app', minimumFreeMb: 1024,
+    run: async (_command, args) => {
+      calls.push(args.join(' '));
+      if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
+      return { status: 0, stdout: 'Success' };
+    },
+  });
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.free_mb, 7168);
+  assert.deepEqual(calls, [
+    '-s emulator-5554 uninstall com.example.app',
+    '-s emulator-5554 shell df -k /data',
+  ]);
+});
+
+test('test cleanup factory-resets only emulator devices', async () => {
+  const sdk = fs.mkdtempSync(path.join(os.tmpdir(), 'android-sdk-'));
+  const adb = path.join(sdk, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb');
+  const emulator = path.join(sdk, 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
+  fs.mkdirSync(path.dirname(adb), { recursive: true });
+  fs.mkdirSync(path.dirname(emulator), { recursive: true });
+  fs.writeFileSync(emulator, 'test');
+  const calls = [];
+  const launched = [];
+  const wiped = await wipeAvdAfterTest({
+    adb, device: 'emulator-5554', workspace: sdk, sleep: async () => {},
+    run: async (_command, args) => {
+      calls.push(args.join(' '));
+      return args.includes('name')
+        ? { status: 0, stdout: 'AI_MVP_Test\nOK\n' }
+        : { status: 0, stdout: 'OK' };
+    },
+    launch: async (command, args) => {
+      launched.push([command, ...args].join(' '));
+      return { status: 'STARTED' };
+    },
+  });
+  assert.equal(wiped.status, 'PASS');
+  assert.ok(calls.includes('-s emulator-5554 emu kill'));
+  assert.match(launched[0], /-avd AI_MVP_Test -wipe-data -no-snapshot-save/);
+
+  const physical = await wipeAvdAfterTest({ adb, device: 'R58M123', workspace: sdk, run: async () => { throw new Error('should not run'); } });
+  assert.equal(physical.status, 'SKIPPED');
+});
+
 test('build tools versions order with prereleases below their stable release', () => {
   const versions = ['34.0.0', '36.1.0-rc1', '36.0.0'];
   assert.deepEqual(
@@ -40,20 +108,20 @@ test('build tools versions order with prereleases below their stable release', (
   assert.equal(isPrereleaseBuildTools('36.0.0'), false);
 });
 
-test('build tools probe reports a crashing aapt and names a stable fallback', () => {
+test('build tools probe reports a crashing aapt and names a stable fallback', async () => {
   const options = status => ({
     sdkRoot: 'C:/Sdk',
     readdir: () => ['34.0.0', '36.0.0', '36.1.0-rc1'],
     exists: () => true,
-    run: () => ({ status }),
+    run: async () => ({ status }),
   });
-  const healthy = probeBuildTools(options(0));
+  const healthy = await probeBuildTools(options(0));
   assert.equal(healthy.status, 'PASS');
   assert.equal(healthy.checked, '36.1.0-rc1');
   assert.equal(healthy.prerelease, true);
 
   // The exact failure mode seen once: aapt exits with a Windows crash code.
-  const broken = probeBuildTools(options(-1073741502));
+  const broken = await probeBuildTools(options(-1073741502));
   assert.equal(broken.status, 'FAIL');
   assert.equal(broken.stable_fallback, '36.0.0');
   assert.match(broken.details, /Stabil alternatif kurulu: 36\.0\.0/);

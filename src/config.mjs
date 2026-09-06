@@ -18,6 +18,9 @@ export const config = Object.freeze({
   maxConcurrentAgents: Number(process.env.MVP_STUDIO_MAX_CONCURRENT_AGENTS ?? 3),
   maxParallelBuilders: Number(process.env.MVP_STUDIO_MAX_PARALLEL_BUILDERS ?? 3),
   codexTimeoutMs: Number(process.env.MVP_STUDIO_CODEX_TIMEOUT_MS ?? DEFAULT_RUN_TIMEOUT_MS),
+  // Billable tokens one uninterrupted run may spend; 0 disables the guard.
+  projectTokenBudget: Number(process.env.MVP_STUDIO_PROJECT_TOKEN_BUDGET ?? 1_500_000),
+  deviceMinFreeMb: Number(process.env.MVP_STUDIO_DEVICE_MIN_FREE_MB ?? 1536),
   codexCommand: process.env.MVP_STUDIO_CODEX_COMMAND ?? defaultCodexCommand(),
   root,
   dataDir: path.join(root, 'data'),

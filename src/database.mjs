@@ -152,10 +152,18 @@ export class Database {
     `).run(projectId, type, JSON.stringify(payload), new Date().toISOString());
   }
 
-  listEvents(projectId) {
-    return this.connection.prepare('SELECT * FROM events WHERE project_id = ? ORDER BY id')
-      .all(projectId)
-      .map(event => ({ ...event, payload: JSON.parse(event.payload) }));
+  /**
+   * Returns events oldest-first. The panel polls this a few times a minute, so a
+   * long-running project would otherwise re-send hundreds of Codex events each
+   * time; `limit` keeps the newest slice.
+   */
+  listEvents(projectId, { limit = 0 } = {}) {
+    const rows = limit > 0
+      ? this.connection
+        .prepare('SELECT * FROM events WHERE project_id = ? ORDER BY id DESC LIMIT ?')
+        .all(projectId, limit).reverse()
+      : this.connection.prepare('SELECT * FROM events WHERE project_id = ? ORDER BY id').all(projectId);
+    return rows.map(event => ({ ...event, payload: JSON.parse(event.payload) }));
   }
 
   createAgentRun(projectId, agentName, role, workspacePath) {
@@ -178,6 +186,22 @@ export class Database {
     const assignments = entries.map(([key]) => `${key} = ?`).join(', ');
     this.connection.prepare(`UPDATE agent_runs SET ${assignments} WHERE id = ?`)
       .run(...entries.map(([, value]) => value), id);
+  }
+
+  /** Billable usage: cached input is not charged again, so it is subtracted. */
+  sumProjectTokens(projectId) {
+    const row = this.connection.prepare(`
+      SELECT COALESCE(SUM(input_tokens), 0) AS input,
+             COALESCE(SUM(cached_input_tokens), 0) AS cached,
+             COALESCE(SUM(output_tokens), 0) AS output
+      FROM agent_runs WHERE project_id = ?
+    `).get(projectId);
+    return {
+      input: Number(row.input),
+      cached: Number(row.cached),
+      output: Number(row.output),
+      billable: Math.max(0, Number(row.input) - Number(row.cached)) + Number(row.output),
+    };
   }
 
   listAgentRuns(projectId) {

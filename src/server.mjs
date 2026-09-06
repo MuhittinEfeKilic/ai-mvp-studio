@@ -19,8 +19,10 @@ const orchestrator = new Orchestrator({
   maxConcurrentRuns: config.maxConcurrentRuns,
   maxConcurrentAgents: config.maxConcurrentAgents,
   maxParallelBuilders: config.maxParallelBuilders,
+  tokenBudget: config.projectTokenBudget,
+  deviceMinFreeMb: config.deviceMinFreeMb,
 });
-const indexHtml = fs.readFileSync(path.join(config.root, 'src', 'mvp_studio', 'static', 'index.html'), 'utf8');
+const indexPath = path.join(config.root, 'src', 'mvp_studio', 'static', 'index.html');
 const specTemplate = fs.readFileSync(path.join(config.root, 'templates', 'PROJECT_SPEC.template.md'), 'utf8');
 const mobileSpecTemplate = fs.readFileSync(path.join(config.root, 'templates', 'PROJECT_SPEC.mobile.template.md'), 'utf8');
 
@@ -44,7 +46,9 @@ export function createServer() {
     try {
       if (request.method === 'GET' && url.pathname === '/') {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        response.end(indexHtml);
+        // Read per request: caching it at boot silently served a stale panel
+        // after every edit until the server was restarted.
+        response.end(fs.readFileSync(indexPath, 'utf8'));
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/spec-template') {
@@ -70,7 +74,12 @@ export function createServer() {
       }
       if (request.method === 'GET' && url.pathname === '/api/health') {
         const version = await runner.version();
-        sendJson(response, 200, { status: 'ok', codex_available: Boolean(version), codex_version: version });
+        sendJson(response, 200, {
+          status: 'ok',
+          codex_available: Boolean(version),
+          codex_version: version,
+          token_budget: config.projectTokenBudget,
+        });
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/projects') {
@@ -157,7 +166,7 @@ export function createServer() {
           ...project,
           agent_runs: database.listAgentRuns(match[1]),
           tasks: database.listTasks(match[1]),
-          events: database.listEvents(match[1]),
+          events: database.listEvents(match[1], { limit: 400 }),
         });
         return;
       }

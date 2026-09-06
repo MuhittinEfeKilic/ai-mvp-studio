@@ -7,7 +7,9 @@ prototipleri üreten local-first bir MVP atölyesidir. Studio'nun kendisi yayın
 ## Çalışma modeli
 
 1. Ürün fikrini ChatGPT ile olgunlaştırın.
-2. [PROJECT_SPEC.template.md](templates/PROJECT_SPEC.template.md) taslağını doldurun.
+2. Taslağı doldurun: mobil ürün için
+   [PROJECT_SPEC.mobile.template.md](templates/PROJECT_SPEC.mobile.template.md),
+   diğer durumlarda [PROJECT_SPEC.template.md](templates/PROJECT_SPEC.template.md).
 3. Açık kararları kapatıp frontmatter içindeki `status` değerini `approved` yapın.
 4. Dosyayı Studio paneline yükleyin.
 5. Doğrulama başarılıysa Codex üretimini başlatın.
@@ -19,35 +21,63 @@ Mobil spec'lerde `Kritik Kullanıcı Akışları` bölümü zorunludur. Studio b
 proje oluşturulurken makinece okunabilir `USER_FLOWS.json` sözleşmesine dönüştürür;
 planlama, uygulama, integration test ve review agent'ları aynı sözleşmeyi kullanır.
 
-## İlk sürümün kapsamı
+`Kabul Kriterleri` maddeleri de aynı biçimde `ACCEPTANCE_CRITERIA.json` sözleşmesine
+dönüşür ve incelemenin bloklayabileceği tek liste olur. Bu yüzden maddeler
+gözlemlenebilir ürün davranışı anlatmalıdır; toolchain sonuçları `Kalite
+Gereksinimleri` bölümüne aittir.
 
-- Yerel web panelinden PROJECT_SPEC.md yükleme ve doğrulama
-- Her proje için izole bir Git çalışma alanı
-- Codex CLI'yi etkileşimsiz ve JSONL çıktıyla çalıştırma
-- SQLite üzerinde proje ve çalışma durumu
-- Codex olaylarını ve son çıktıyı panelde görüntüleme
-- Aynı anda sınırlı sayıda çalışma yürütme
-- Aynı proje içinde paralel Architecture ve UX agent'ları
-- İzole Git worktree'leri, Builder ve final Reviewer aşaması
-- Süre/token bütçesi olmadan Git checkpoint tabanlı duraklatma ve devam ettirme
-- Kalıcı görev grafiği, görev bağımlılıkları ve path çakışmasını önleyen scheduler
-- Repository içindeki `PROJECT_STATE.json` ile context bağımsız proje hafızası
+## Kapsam
+
+- Yerel panelden PROJECT_SPEC.md yükleme, doğrulama ve üretimi başlatma
+- Her proje için izole Git repository'si ve agent başına ayrı worktree
+- Codex CLI'yi etkileşimsiz, JSONL çıktıyla ve süre sınırıyla çalıştırma
+- Kalıcı görev grafiği, bağımlılıklar ve path çakışmasını önleyen scheduler
+- Orchestrator'ın ürettiği Flutter iskeleti ve merkezden kurulan bağımlılıklar
+- Dört çekli kalite kapısı: analyze, test, debug APK ve kaynak teşhis taraması
+- Emülatörü kendisi başlatan Android cihaz kapısı ve kritik akış doğrulaması
+- Kalite, cihaz ve inceleme kapılarının her biri için sınırlı onarım döngüsü
+- `ACCEPTANCE_CRITERIA.json` üzerinden kanıta bağlı inceleme sözleşmesi
+- Git checkpoint tabanlı duraklatma, devam ettirme ve görev bazlı yeniden deneme
 - Rol/görev bazlı dar context paketleri ve cache ayrıştırılmış token metrikleri
-- Yapılandırılmış analyze/test/APK kalite raporu ve kullanıcı kabul kapısı
+- Sekmeli panel: canlı agent etkinliği, görev grafiği, olay akışı ve kabul kapısı
+
+Claude entegrasyonu ve otomatik yayınlama kapsam dışıdır.
 
 ## Çoklu-agent akışı
 
 ```text
-PROJECT_SPEC.md
-  ├─ Architecture Agent ─→ ARCHITECTURE.md ┐
-  └─ UX Agent ───────────→ UX_SPEC.md ──────┤ (paralel)
-                                             ↓
-                                      Builder Agent
-                                             ↓
-                                      Reviewer Agent
-                                             ↓
-                                       completed
+PROJECT_SPEC.md ─→ USER_FLOWS.json + ACCEPTANCE_CRITERIA.json
+        ↓
+flutter create iskeleti (orchestrator) ──→ Gradle ısınması (arka planda)
+        ↓
+  ├─ Architecture Agent ─→ ARCHITECTURE.md
+  └─ UX Agent ───────────→ UX_SPEC.md            (paralel)
+        ↓
+Coordinator Agent ─→ TASK_PLAN.json ─→ flutter pub add
+        ↓
+Flutter Builder × N   (paralel, ayrık path sahipliği)
+        ↓
+Integration Agent
+        ↓
+Kalite kapısı: analyze · test · apk · diagnostics ──FAIL──→ Repair × 3
+        ↓
+Cihaz kapısı: akış kapsamı · integration · kurulum · açılış
+        │                    ├─ ürün hatası  ──→ Device Repair × 2
+        │                    └─ ortam arızası ──→ awaiting_device_test (bekler)
+        ↓
+Mobile Reviewer (cihaz kapısıyla eşzamanlı) ──FAIL──→ Review Repair × 2
+        ↓
+awaiting_user_review ─→ kullanıcı kabul eder veya geri bildirim gönderir
 ```
+
+Her onarım döngüsü sınırlıdır ve aynı hata imzası tekrarlarsa erkenden durur; kod
+değiştiği için her turdan sonra alt kapılar yeniden koşar.
+
+PROJECT_SPEC içindeki `Kabul Kriterleri` maddeleri `ACCEPTANCE_CRITERIA.json` olarak
+`AC1..ACn` kimlikleriyle repository'ye yazılır. Reviewer her maddeyi kanıtıyla
+yanıtlamak zorundadır ve yalnız bu maddeler üzerinden bloklayabilir; listenin
+dışındaki gözlemler engelleyici değil, not olarak raporlanır. Yeniden çalışan bir
+inceleme kendi önceki bulgularını görür ve her birini açıkça kapatmak zorundadır.
 
 Studio, agent'lar başlamadan önce `flutter create` ile uygulama iskeletini kendisi
 üretir ve soğuk Gradle derlemesini planlama agent'larıyla eşzamanlı olarak arka
@@ -74,6 +104,11 @@ tamamlanmış Architecture, UX, Coordinator, Integration ve Reviewer aşamaları
 Tek bir Codex çağrısı `MVP_STUDIO_CODEX_TIMEOUT_MS` süresini aşarsa süreç ağacı
 sonlandırılır ve proje devam ettirilebilir biçimde `failed` olur.
 
+Bir çalışma `MVP_STUDIO_PROJECT_TOKEN_BUDGET` faturalanabilir tokenını (cache dışı
+giriş + çıkış) aşarsa hat bir sonraki agent'ı başlatmadan durur. Sınır kesintisiz
+bir çalışma içindir; devam ettirmek yeni bir bütçe başlatır. Panelin Agentlar
+sekmesi tüketimi bütçeye göre gösterir.
+
 Studio projelere sabit süre veya token sınırı koymaz. Her agent başlamadan önce
 mevcut Git commit'i checkpoint olarak SQLite'a kaydedilir; Codex thread kimliği ve
 bildirdiği token kullanımı da agent çalışmasına eklenir.
@@ -86,15 +121,13 @@ tamamlanmış aşamaları atlar ve yarım kalan dosyaları yeni bir Codex oturum
 inceleterek üretime devam eder. Gerçek hata durumundaki `failed` projeler de aynı
 mekanizmayla tekrar denenebilir.
 
-Claude entegrasyonu ilk sürümün kapsamında değildir.
-
 ## Koordineli görev modeli
 
 Yeni projeler varsayılan olarak `flutter_mobile` profiliyle açılır. Architecture ve
-UX görevleri paralel çalışabilir; Builder ancak ikisi tamamlandığında, Reviewer ise
-Builder tamamlandığında hazır hale gelir. Scheduler aynı anda çalışacak görevlerin
-`allowed_paths` alanlarını karşılaştırır ve çakışan dosya sahipliklerini paralel
-başlatmaz.
+UX görevleri paralel çalışır; Coordinator ikisi tamamlandığında, Builder'lar plan
+üretildiğinde, Integration bütün Builder'lar bittiğinde hazır hale gelir. Scheduler
+aynı anda çalışacak görevlerin `allowed_paths` alanlarını karşılaştırır ve çakışan
+dosya sahipliklerini paralel başlatmaz.
 
 Görevler ve bağımlılıkları SQLite'taki `tasks` ve `task_dependencies` tablolarında
 kalıcıdır. Durum, checkpoint commit'i, worktree/branch, deneme sayısı ve hata bilgisi
@@ -114,29 +147,50 @@ bloklayıcı hata sayar; hata ya incelenmeli ya yeniden fırlatılmalıdır. Tek
 kabul edebilir veya hedefli bir Feedback Repair turu başlatabilir.
 
 Mobil spec'te `device_test: "required"` ise teknik kontrolden sonra Android cihaz
-kapısı çalışır. Bağlı cihaz yoksa Studio `flutter emulators --launch` ile ilk
-emülatörü kendisi başlatır ve `sys.boot_completed` özelliğini bekler; açılış
-tamamlanmadan test başlatılmaz. Emülatör bulunamaz veya açılmazsa proje
-`awaiting_device_test` durumunda güvenle bekler. Aynı kapı kullanıcı geri bildirimi turundan sonra da çalışır; teknik
-kontroller tek başına ürün kabulü için yeterli sayılmaz. Studio `ADB_BIN`, Android SDK platform-tools ve LDPlayer 9 yollarını
-sırayla arar. Bağlı cihaz yoksa proje `awaiting_device_test` durumunda bekler. Cihaz
-bağlandığında paneldeki **Cihaz testini yeniden dene** düğmesi kullanılabilir. Kapı,
-kritik akışların `integration_test/` kapsamını, cihaz üstündeki Flutter integration
-testlerini, APK kurulumunu, uygulama sürecini ve logcat crash kayıtlarını doğrular.
-Kanıtlar `DEVICE_REPORT.json` ve `QUALITY_LOGS/DEVICE_*` dosyalarında saklanır.
+kapısı çalışır. Aynı kapı kullanıcı geri bildirimi turundan sonra da işler; teknik
+kontroller tek başına ürün kabulü için yeterli sayılmaz.
+
+Kapı, kritik akışların `integration_test/` kapsamını, cihaz üstündeki Flutter
+integration testlerini, APK kurulumunu, uygulama sürecini ve logcat crash kayıtlarını
+doğrular. Kanıtlar `DEVICE_REPORT.json` ve `QUALITY_LOGS/DEVICE_*` dosyalarında
+saklanır. Integration test dosyaları birbirinden ayrı süreçlerde ve dosya başına
+180 saniyelik sınırla çalışır. Windows'ta süre aşımı bütün Flutter/Dart süreç ağacını
+kapatır; takılan dosyanın yolu cihaz raporunda `failed_file` olarak görünür.
+
+ADB yolu `ADB_BIN`, Android SDK platform-tools ve sistem PATH konumlarından sırayla
+aranır; LDPlayer'a özel yol veya entegrasyon kullanılmaz. Bağlı cihaz yoksa Studio
+`flutter emulators --launch` ile ilk Android Studio AVD'sini
+kendisi başlatır ve `sys.boot_completed` özelliğini bekler; açılış tamamlanmadan
+test başlatılmaz. Emülatör bulunamaz veya süresinde açılmazsa proje
+`awaiting_device_test` durumunda güvenle bekler ve paneldeki **Cihaz testini
+yeniden dene** düğmesiyle sürdürülür.
+
+Test başlamadan önce yalnız hedef uygulamanın eski paketi AVD'den kaldırılır ve
+`/data` boş alanı ölçülür. Varsayılan minimum 1536 MB'dir ve
+`MVP_STUDIO_DEVICE_MIN_FREE_MB` ile değiştirilebilir. Alan yetersizse APK kurulumu
+denenmeden proje `awaiting_device_test` durumuna geçer. Her cihaz testi sonucu
+(başarılı, ürün hatası veya ortam hatası) raporlandıktan sonra yalnız kullanılan
+Android Studio AVD kapatılır ve `-wipe-data` ile temiz olarak yeniden başlatılır.
+Böylece bir üretimin uygulama/veri artıkları sonraki üretime taşınmaz. Fiziksel
+Android cihazlar güvenlik nedeniyle hiçbir zaman otomatik sıfırlanmaz.
 
 Cihazda ürün kaynaklı bir hata çıkarsa en fazla iki hedefli Device Repair turu
 uygulanır; her turdan sonra APK yeniden üretilip doğrulanır. Aynı hata imzası
 tekrarlarsa, tur hakkı biterse veya hata bir agent turuyla düzeltilemezse
 `DEVICE_ROOT_CAUSE_REPORT.md` yazılır ve döngü durur.
 
-Cihaz kapısı arızayı sınıflandırır. Emülatör kopması, ABI uyumsuzluğu veya toolchain
-çöküşü gibi ortam arızaları `DEVICE_REPORT.json` içinde
-`failure_kind: "environment"` ile işaretlenir ve projeyi başarısız saymak yerine
-`awaiting_device_test` durumunda bekletir. Testlerden gelen gerçek hatalar
-`failure_kind: "product"` olarak kalır; tanınmayan hata da ürün hatası sayılır.
-Panel hata mesajında gerçekten başarısız olan çeki, exit kodunu ve ilgili log dosyasını
-gösterir.
+Cihaz kapısı arızayı sınıflandırır. Emülatör kopması veya toolchain çöküşü gibi
+ortam arızaları `DEVICE_REPORT.json` içinde `failure_kind: "environment"` ile
+işaretlenir ve projeyi başarısız saymak yerine `awaiting_device_test` durumunda
+bekletir. Testlerden gelen gerçek hatalar `failure_kind: "product"` olarak kalır;
+tanınmayan hata da ürün hatası sayılır. Panel hata mesajında gerçekten başarısız olan
+çeki, exit kodunu ve ilgili log dosyasını gösterir.
+
+Kapılar yetkilidir: Mobile Reviewer `TEST_REPORT.json` ve `DEVICE_REPORT.json`
+sonuçlarını yeniden yargılamaz, PASS'i kanıt kabul eder. Reviewer bloklarsa en fazla
+iki hedefli Review Repair turu uygulanır; her turdan sonra kalite ve cihaz kapıları
+yeniden koşar ve inceleme tekrarlanır. Bulgular iki turda değişmezse döngü durur ve
+gerekçeler proje hatasına yazılır.
 
 ## Pipeline stabilizasyonu
 
@@ -159,6 +213,12 @@ gereksiz token tüketimini önlemek için döngü erken durur ve
 - Git
 - Codex CLI
 - Codex CLI içinde yapılmış ChatGPT oturumu
+
+Flutter mobil profili için ek olarak:
+
+- Flutter SDK (`FLUTTER_BIN` veya PATH üzerinden)
+- Android SDK ve platform-tools
+- `device_test: "required"` spec'ler için en az bir Android emülatörü veya cihaz
 
 ```powershell
 node --version
@@ -188,7 +248,8 @@ Ayarlar ortam değişkenleriyle değiştirilebilir; tüm anahtarlar ve varsayıl
 aynı anda çalışan proje sayısı (`MVP_STUDIO_MAX_CONCURRENT_RUNS`), bir projedeki
 paralel builder sayısı (`MVP_STUDIO_MAX_PARALLEL_BUILDERS`) ve tüm sistemdeki
 Codex süreci sayısı (`MVP_STUDIO_MAX_CONCURRENT_AGENTS`). Sonuncusu diğer ikisinin
-çarpımını sınırlayan üst kapıdır.
+çarpımını sınırlayan üst kapıdır. Bir çalışmanın token sınırı
+`MVP_STUDIO_PROJECT_TOKEN_BUDGET` (varsayılan 1.500.000, 0 = sınırsız).
 
 Terminalde aşağıdaki satır göründüğünde sunucu hazırdır:
 
@@ -215,8 +276,9 @@ npm test
 ```
 
 `npm run check` ana JavaScript modüllerinin sözdizimini, `npm test` ise veritabanı,
-spec doğrulama, görev grafiği, scheduler, worktree, checkpoint, kalite raporu ve
-orchestrator davranışlarını denetler. Gerçek Codex kullanan düşük maliyetli kontrol
+spec doğrulama, plan paralellik kuralları, scheduler, worktree, checkpoint, kalite ve
+inceleme sözleşmeleri, kaynak teşhis taraması, cihaz kapısı, emülatör otomasyonu,
+Codex timeout ve orchestrator davranışlarını denetler. Gerçek Codex kullanan düşük maliyetli kontrol
 ayrı tutulur:
 
 Tek gerçek ve çok kısa Codex çağrısıyla checkpoint akışını doğrulamak için:
@@ -246,7 +308,9 @@ yerleşik modüllerini kullanır. Runtime verileri `data/` ve `projects/` altın
 | `src/device-tester.mjs` | Android cihaz kapısı ve arıza sınıflandırması |
 | `src/source-diagnostics.mjs` | Üretilen Dart kaynağında sessiz hata yutma taraması |
 | `src/android-environment.mjs` | Emülatör başlatma, açılış bekleme, build-tools sağlığı |
+| `src/context-packager.mjs` | Rol bazlı context paketleri |
 | `src/config.mjs` | Ortam değişkenleri ve varsayılan ayarlar |
+| `src/mvp_studio/static/index.html` | Web paneli |
 | `templates/` | Genel ve Flutter mobil PROJECT_SPEC şablonları |
 | `projects/<id>/repository/` | Üretilen uygulamanın ana Git repository'si |
 | `projects/<id>/worktrees/` | Agent'ların izole çalışma alanları |

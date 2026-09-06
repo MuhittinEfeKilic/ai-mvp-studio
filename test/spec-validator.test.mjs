@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { parseCriticalUserFlows, validateSpec } from '../src/spec-validator.mjs';
+import {
+  parseAcceptanceCriteria, parseCriticalUserFlows, validateSpec,
+} from '../src/spec-validator.mjs';
 
 const template = fs.readFileSync(path.resolve('templates/PROJECT_SPEC.template.md'), 'utf8');
 const mobileTemplate = fs.readFileSync(path.resolve('templates/PROJECT_SPEC.mobile.template.md'), 'utf8');
@@ -66,4 +68,41 @@ test('mobile spec is blocked when a platform decision is missing', () => {
   const report = validateSpec(spec);
   assert.equal(report.ready, false);
   assert.ok(report.blocking_issues.some(issue => issue.message.includes('`package_name`')));
+});
+
+test('acceptance criteria become an identified checklist', () => {
+  const spec = fs.readFileSync(path.resolve('examples/ders-notu/PROJECT_SPEC.md'), 'utf8');
+  const criteria = parseAcceptanceCriteria(spec);
+  assert.equal(criteria.length, 7);
+  assert.equal(criteria[0].id, 'AC1');
+  assert.match(criteria[0].text, /Ders eklenir/);
+  assert.match(criteria.at(-1).text, /emülatörde uçtan uca/);
+  assert.deepEqual(parseAcceptanceCriteria('# Ürün Özeti\n\nBoş.'), []);
+});
+
+test('task-list markers are not part of the criterion text', () => {
+  const spec = [
+    '# Kabul Kriterleri', '',
+    '- [ ] Kullanıcı akışı tamamlanabilir.',
+    '- [x] Veri yeniden açılışta korunur.',
+    '* Üçüncü madde madde işaretiyle yazılmış.',
+    '',
+    'Bu satır madde değil, açıklamadır.',
+  ].join('\n');
+  assert.deepEqual(parseAcceptanceCriteria(spec).map(item => [item.id, item.text]), [
+    ['AC1', 'Kullanıcı akışı tamamlanabilir.'],
+    ['AC2', 'Veri yeniden açılışta korunur.'],
+    ['AC3', 'Üçüncü madde madde işaretiyle yazılmış.'],
+  ]);
+});
+
+test('templates keep toolchain results out of the acceptance checklist', () => {
+  for (const file of ['templates/PROJECT_SPEC.template.md', 'templates/PROJECT_SPEC.mobile.template.md']) {
+    const criteria = parseAcceptanceCriteria(fs.readFileSync(path.resolve(file), 'utf8'));
+    assert.ok(criteria.length > 0, file);
+    // The gates own these; a criterion naming them invites the reviewer to re-judge them.
+    for (const item of criteria) {
+      assert.doesNotMatch(item.text, /flutter (analyze|test)|APK|integration test/i, `${file} → ${item.id}`);
+    }
+  }
 });

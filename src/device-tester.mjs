@@ -1,9 +1,11 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
-import { ensureBootedDevice, parseAdbDevices } from './android-environment.mjs';
+import {
+  ensureBootedDevice, parseAdbDevices, prepareDeviceForTest, wipeAvdAfterTest,
+} from './android-environment.mjs';
 
 export { parseAdbDevices };
 
@@ -13,7 +15,6 @@ export function adbCandidates(env = process.env, platform = process.platform) {
   const values = [env.ADB_BIN];
   if (platform === 'win32') {
     if (env.LOCALAPPDATA) values.push(path.join(env.LOCALAPPDATA, 'Android', 'Sdk', 'platform-tools', 'adb.exe'));
-    values.push('C:\\LDPlayer\\LDPlayer9\\adb.exe');
   }
   values.push('adb');
   return [...new Set(values.filter(Boolean))];
@@ -60,6 +61,7 @@ const ENVIRONMENT_SIGNALS = [
   /INSTALL_FAILED_(?:INSUFFICIENT_STORAGE|MEDIA_UNAVAILABLE|DEVICE_OFFLINE|UPDATE_INCOMPATIBLE)/i,
   /daemon not running|cannot connect to daemon|adb server/i,
   /Connection refused|Connection reset by peer|Software caused connection abort/i,
+  /DEVICE_TEST_TIMEOUT/i,
 ];
 
 /** Failures that come from the generated application or its tests. */
@@ -98,13 +100,15 @@ export function classifyDeviceFailure(logText) {
   return { kind: 'product', signal: null };
 }
 
-const DEVICE_CHECK_ORDER = ['flow_coverage', 'integration_test', 'apk_install', 'launch'];
+const DEVICE_CHECK_ORDER = ['flow_coverage', 'device_storage', 'integration_test', 'apk_install', 'launch', 'avd_wipe'];
 
 const DEVICE_CHECK_LABELS = Object.freeze({
   flow_coverage: 'Kritik akış kapsamı',
+  device_storage: 'AVD depolama hazırlığı',
   integration_test: 'Cihazda integration test',
   apk_install: 'APK kurulumu',
   launch: 'Uygulama açılışı',
+  avd_wipe: 'Test sonrası AVD temizliği',
 });
 
 const DEVICE_CHECK_LOGS = Object.freeze({
@@ -168,12 +172,58 @@ export function describeDeviceFailure(report) {
   return parts.join(' · ');
 }
 
+/**
+ * Async on purpose: an adb/flutter device run takes minutes and spawnSync would
+ * hold Node's event loop for all of it, stalling every other project's agents.
+ */
 function defaultRun(command, args, options = {}) {
   const invocation = process.platform === 'win32' && /\.(?:bat|cmd)$/i.test(command)
     ? { command: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command, ...args] }
     : { command, args };
-  return spawnSync(invocation.command, invocation.args, {
-    encoding: 'utf8', windowsHide: true, timeout: 600_000, ...options,
+  return new Promise(resolve => {
+    let child;
+    let settled = false;
+    const timeoutMs = Number(options.timeout) || 600_000;
+    const spawnOptions = { ...options };
+    delete spawnOptions.timeout;
+    try {
+      child = spawn(invocation.command, invocation.args, {
+        windowsHide: true, ...spawnOptions,
+      });
+    } catch (error) {
+      resolve({ status: null, stdout: '', stderr: '', error });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    child.once('error', error => finish({ status: null, stdout, stderr, error }));
+    child.once('close', status => finish({ status, stdout, stderr }));
+    const timer = setTimeout(() => {
+      const timeoutMessage = `DEVICE_TEST_TIMEOUT: süreç ${Math.round(timeoutMs / 1000)} saniyede tamamlanmadı.`;
+      if (process.platform === 'win32' && child.pid) {
+        const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+          windowsHide: true, stdio: 'ignore',
+        });
+        killer.once('close', () => finish({
+          status: null, stdout, stderr: [stderr, timeoutMessage].filter(Boolean).join('\n'), timedOut: true,
+        }));
+        killer.once('error', error => {
+          child.kill('SIGKILL');
+          finish({ status: null, stdout, stderr: [stderr, timeoutMessage].filter(Boolean).join('\n'), timedOut: true, error });
+        });
+      } else {
+        child.kill('SIGKILL');
+        finish({ status: null, stdout, stderr: [stderr, timeoutMessage].filter(Boolean).join('\n'), timedOut: true });
+      }
+    }, timeoutMs);
   });
 }
 
@@ -183,11 +233,11 @@ const outputOf = result => [result.stdout, result.stderr, result.error?.message]
 let cachedAdb;
 
 /** Memoised like the Flutter lookup; each probe is a real `adb version` spawn. */
-export function resolveAdb({ env = process.env, platform = process.platform, run = defaultRun, cache = true } = {}) {
+export async function resolveAdb({ env = process.env, platform = process.platform, run = defaultRun, cache = true } = {}) {
   if (cache && cachedAdb !== undefined) return cachedAdb;
   let resolved = null;
   for (const candidate of adbCandidates(env, platform)) {
-    const result = run(candidate, ['version']);
+    const result = await run(candidate, ['version']);
     if (result.status === 0) {
       resolved = candidate;
       break;
@@ -223,6 +273,8 @@ const productFailure = report => ({ ...report, failure_kind: 'product' });
 export async function runAndroidDeviceGate({
   workspace, apkPath, packageName, flows, flutterExecutable, adbExecutable,
   run = defaultRun, acquireDevice = ensureBootedDevice,
+  prepareDevice = prepareDeviceForTest, minimumFreeMb = 1536,
+  wipeDevice = wipeAvdAfterTest,
 }) {
   const coverage = validateFlowCoverage(workspace, flows);
   const report = {
@@ -248,31 +300,82 @@ export async function runAndroidDeviceGate({
   }
   const device = { id: acquired.device };
   report.device = device.id;
-  if (coverage.status !== 'PASS') return productFailure(report);
-
-  const integration = run(flutterExecutable, ['test', 'integration_test', '-d', device.id], { cwd: workspace });
-  report.logs.integration_test = outputOf(integration);
-  report.checks.integration_test = {
-    status: integration.status === 0 ? 'PASS' : 'FAIL', exit_code: integration.status,
+  const finish = async result => {
+    const wiped = await wipeDevice({
+      run: (command, args) => run(command, args, { cwd: workspace }),
+      adb: adbExecutable, device: device.id, workspace,
+    });
+    result.logs.avd_wipe = wiped.log || wiped.details || '';
+    result.checks.avd_wipe = { status: wiped.status, avd_name: wiped.avd_name, details: wiped.details };
+    if (wiped.status === 'FAIL' && result.status === 'PASS') {
+      return {
+        ...result, status: 'WAITING', failure_kind: 'environment',
+        reason: wiped.details || 'Test sonrası AVD temizliği tamamlanamadı.',
+      };
+    }
+    return result;
   };
-  if (integration.status !== 0) {
-    return environmentWait(report, 'integration_test', report.logs.integration_test)
-      ?? productFailure(report);
+  if (coverage.status !== 'PASS') return finish(productFailure(report));
+
+  const prepared = await prepareDevice({
+    run: (command, args) => run(command, args, { cwd: workspace }),
+    adb: adbExecutable, device: device.id, packageName, minimumFreeMb,
+  });
+  report.logs.device_storage = prepared.log || prepared.details || prepared.reason || '';
+  report.checks.device_storage = {
+    status: prepared.status, free_mb: prepared.free_mb,
+    required_mb: prepared.required_mb, details: prepared.details || prepared.reason,
+  };
+  if (prepared.status !== 'PASS') {
+    return finish({
+      ...report, status: 'WAITING', failure_kind: 'environment',
+      reason: prepared.reason || 'AVD test hazırlığı tamamlanamadı.',
+    });
   }
 
-  run(adbExecutable, ['-s', device.id, 'logcat', '-c'], { cwd: workspace });
-  const install = run(adbExecutable, ['-s', device.id, 'install', '-r', '-t', apkPath], { cwd: workspace });
+  const integrationTests = coverage.integration_tests;
+  const integrationLogs = [];
+  const completedFiles = [];
+  let integration = { status: 0, stdout: '', stderr: '' };
+  let failedFile = null;
+  for (const testFile of integrationTests) {
+    integration = await run(
+      flutterExecutable, ['test', testFile, '-d', device.id],
+      { cwd: workspace, timeout: 180_000 },
+    );
+    integrationLogs.push(`===== ${testFile} =====\n${outputOf(integration) || '(çıktı yok)'}`);
+    if (integration.status !== 0) {
+      failedFile = testFile;
+      break;
+    }
+    completedFiles.push(testFile);
+  }
+  report.logs.integration_test = integrationLogs.join('\n\n');
+  report.checks.integration_test = {
+    status: integration.status === 0 ? 'PASS' : 'FAIL', exit_code: integration.status,
+    completed_files: completedFiles, failed_file: failedFile, timed_out: Boolean(integration.timedOut),
+    details: failedFile
+      ? `${failedFile} cihaz testi${integration.timedOut ? ' 180 saniyede zaman aşımına uğradı' : ' başarısız oldu'}.`
+      : `${completedFiles.length} cihaz testi dosyası ayrı süreçlerde geçti.`,
+  };
+  if (integration.status !== 0) {
+    return finish(environmentWait(report, 'integration_test', report.logs.integration_test)
+      ?? productFailure(report));
+  }
+
+  await run(adbExecutable, ['-s', device.id, 'logcat', '-c'], { cwd: workspace });
+  const install = await run(adbExecutable, ['-s', device.id, 'install', '-r', '-t', apkPath], { cwd: workspace });
   report.logs.apk_install = outputOf(install);
   report.checks.apk_install = { status: install.status === 0 ? 'PASS' : 'FAIL', exit_code: install.status };
   if (install.status !== 0) {
-    return environmentWait(report, 'apk_install', report.logs.apk_install) ?? productFailure(report);
+    return finish(environmentWait(report, 'apk_install', report.logs.apk_install) ?? productFailure(report));
   }
-  run(adbExecutable, ['-s', device.id, 'shell', 'am', 'force-stop', packageName], { cwd: workspace });
-  const launch = run(adbExecutable, ['-s', device.id, 'shell', 'monkey', '-p', packageName,
+  await run(adbExecutable, ['-s', device.id, 'shell', 'am', 'force-stop', packageName], { cwd: workspace });
+  const launch = await run(adbExecutable, ['-s', device.id, 'shell', 'monkey', '-p', packageName,
     '-c', 'android.intent.category.LAUNCHER', '1'], { cwd: workspace });
-  run(adbExecutable, ['-s', device.id, 'shell', 'sleep', '2'], { cwd: workspace });
-  const pid = run(adbExecutable, ['-s', device.id, 'shell', 'pidof', packageName], { cwd: workspace });
-  const logcat = run(adbExecutable, ['-s', device.id, 'logcat', '-d', '-t', '800'], { cwd: workspace });
+  await run(adbExecutable, ['-s', device.id, 'shell', 'sleep', '2'], { cwd: workspace });
+  const pid = await run(adbExecutable, ['-s', device.id, 'shell', 'pidof', packageName], { cwd: workspace });
+  const logcat = await run(adbExecutable, ['-s', device.id, 'logcat', '-d', '-t', '800'], { cwd: workspace });
   report.logs.launch = outputOf(launch);
   report.logs.logcat = outputOf(logcat);
   const fatal = /FATAL EXCEPTION|E\/flutter|Unhandled Exception/i.test(report.logs.logcat);
@@ -283,18 +386,18 @@ export async function runAndroidDeviceGate({
 
   const remoteScreenshot = '/sdcard/ai_mvp_device_smoke.png';
   const remoteUi = '/sdcard/ai_mvp_device_ui.xml';
-  run(adbExecutable, ['-s', device.id, 'shell', 'screencap', '-p', remoteScreenshot], { cwd: workspace });
-  run(adbExecutable, ['-s', device.id, 'shell', 'uiautomator', 'dump', remoteUi], { cwd: workspace });
+  await run(adbExecutable, ['-s', device.id, 'shell', 'screencap', '-p', remoteScreenshot], { cwd: workspace });
+  await run(adbExecutable, ['-s', device.id, 'shell', 'uiautomator', 'dump', remoteUi], { cwd: workspace });
   const logDir = path.join(workspace, 'QUALITY_LOGS');
   fs.mkdirSync(logDir, { recursive: true });
-  run(adbExecutable, ['-s', device.id, 'pull', remoteScreenshot, path.join(logDir, 'DEVICE_SCREEN.png')], { cwd: workspace });
-  run(adbExecutable, ['-s', device.id, 'pull', remoteUi, path.join(logDir, 'DEVICE_UI.xml')], { cwd: workspace });
+  await run(adbExecutable, ['-s', device.id, 'pull', remoteScreenshot, path.join(logDir, 'DEVICE_SCREEN.png')], { cwd: workspace });
+  await run(adbExecutable, ['-s', device.id, 'pull', remoteUi, path.join(logDir, 'DEVICE_UI.xml')], { cwd: workspace });
   report.status = Object.values(report.checks).every(check => check.status === 'PASS') ? 'PASS' : 'FAIL';
   if (report.status !== 'PASS') {
-    return environmentWait(report, 'launch', `${report.logs.launch}\n${report.logs.logcat}`)
-      ?? productFailure(report);
+    return finish(environmentWait(report, 'launch', `${report.logs.launch}\n${report.logs.logcat}`)
+      ?? productFailure(report));
   }
-  return report;
+  return finish(report);
 }
 
 export function writeDeviceReport(workspace, report) {

@@ -120,16 +120,27 @@ Ana varlıkları, alanlarını, ilişkileri, silme davranışını ve yerel sakl
 
 # Kabul Kriterleri
 
-- [ ] Ana kullanıcı akışı Android telefonda baştan sona tamamlanabilir.
-- [ ] Boş, yükleniyor ve hata durumları tanımlandığı gibi görünür.
-- [ ] Kalıcı olması gereken veri uygulama yeniden açıldığında korunur.
-- [ ] Android geri düğmesi beklenen navigasyonu uygular.
-- [ ] `flutter analyze` ve `flutter test` başarılıdır.
-- [ ] Kritik kullanıcı akışları integration test ve Android cihaz/emülatör üzerinde başarılıdır.
-- [ ] Debug APK üretilebilir.
+Bu bölümdeki her madde `ACCEPTANCE_CRITERIA.json` içine `AC1..ACn` olarak yazılır ve
+Mobile Reviewer her birini kanıtıyla yanıtlamak zorundadır. Reviewer **yalnız** bu
+maddeler üzerinden bloklayabilir, dolayısıyla maddeler gözlemlenebilir ürün davranışı
+anlatmalıdır. `flutter analyze`, `flutter test`, APK üretimi ve cihaz koşusu gibi
+toolchain sonuçlarını buraya yazmayın; onların sahibi kalite ve cihaz kapılarıdır.
+
+- Ana kullanıcı akışı Android telefonda baştan sona tamamlanabilir.
+- Boş, yükleniyor ve hata durumları tanımlandığı gibi görünür.
+- Kalıcı olması gereken veri uygulama yeniden açıldığında korunur.
+- Android geri düğmesi beklenen navigasyonu uygular.
+- Zorunlu alanlar doğrulanır ve reddedilen girdi nedeniyle birlikte gösterilir.
+- Kapsam dışı özellikler uygulanmaz.
 
 # Kalite Gereksinimleri
 
+- `flutter analyze` uyarısız geçmelidir.
+- Birim ve widget testleri bulunmalı, `flutter test` başarılı olmalıdır.
+- Her kritik kullanıcı akışı için `integration_test/` altında bir test bulunmalıdır.
+- Debug APK üretilebilmelidir.
+- Yakalanan hatalar yutulmamalıdır: hata ya incelenip nedeniyle gösterilmeli ya da
+  yeniden fırlatılmalıdır.
 - Gizli anahtarlar kaynak koda yazılmamalıdır.
 - Flutter ve Android SDK sürümleri README içinde belirtilmelidir.
 - Kurulum, çalıştırma, test ve debug APK komutları README içinde bulunmalıdır.
