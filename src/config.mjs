@@ -15,8 +15,8 @@ export const config = Object.freeze({
   host: process.env.MVP_STUDIO_HOST ?? '127.0.0.1',
   port: Number(process.env.MVP_STUDIO_PORT ?? 8000),
   maxConcurrentRuns: Number(process.env.MVP_STUDIO_MAX_CONCURRENT_RUNS ?? 3),
-  maxConcurrentAgents: Number(process.env.MVP_STUDIO_MAX_CONCURRENT_AGENTS ?? 3),
-  maxParallelBuilders: Number(process.env.MVP_STUDIO_MAX_PARALLEL_BUILDERS ?? 3),
+  maxConcurrentAgents: Number(process.env.MVP_STUDIO_MAX_CONCURRENT_AGENTS ?? 5),
+  maxParallelBuilders: Number(process.env.MVP_STUDIO_MAX_PARALLEL_BUILDERS ?? 4),
   codexTimeoutMs: Number(process.env.MVP_STUDIO_CODEX_TIMEOUT_MS ?? DEFAULT_RUN_TIMEOUT_MS),
   flutterTimeoutMs: Number(process.env.MVP_STUDIO_FLUTTER_TIMEOUT_MS ?? 600_000),
   // Billable tokens one uninterrupted run may spend; 0 disables the guard.

@@ -186,8 +186,27 @@ const MAX_REVIEW_REPAIR_ROUNDS = 2;
  * The Coordinator prompt and the TASK_PLAN.json validator must agree, otherwise
  * a plan that follows the prompt is rejected and the project cannot recover.
  */
+export function builderTaskPolicy(specContent) {
+  const { metadata } = parseSpec(specContent);
+  const version = Number.parseInt(metadata.spec_version || '1', 10) || 1;
+  if (version < 2) {
+    return { tier: 'legacy', minTasks: 1, maxTasks: String(specContent ?? '').length < 15_000 ? 3 : 5, targetParallelism: 1 };
+  }
+  const tier = String(metadata.complexity_tier || 'standard').toLowerCase();
+  const presets = {
+    simple: { minTasks: 2, maxTasks: 3, targetParallelism: 2 },
+    standard: { minTasks: 3, maxTasks: 5, targetParallelism: 3 },
+    advanced: { minTasks: 4, maxTasks: 8, targetParallelism: 4 },
+  };
+  const preset = presets[tier] || presets.standard;
+  const requested = Number(metadata.target_parallelism);
+  const targetParallelism = Number.isInteger(requested)
+    ? Math.max(2, Math.min(6, requested, preset.maxTasks)) : preset.targetParallelism;
+  return { tier, ...preset, minTasks: Math.max(preset.minTasks, targetParallelism), targetParallelism };
+}
+
 export function builderTaskLimit(specContent) {
-  return String(specContent ?? '').length < 15_000 ? 3 : 5;
+  return builderTaskPolicy(specContent).maxTasks;
 }
 
 /**
@@ -219,7 +238,7 @@ class Semaphore {
 export class Orchestrator {
   constructor({
     database, runner, projectsDir, maxConcurrentRuns = 2, flutterChecker = null,
-    deviceTester = null, maxConcurrentAgents = 3, maxParallelBuilders = 3, tokenBudget = 0,
+    deviceTester = null, maxConcurrentAgents = 5, maxParallelBuilders = 4, tokenBudget = 0,
     deviceMinFreeMb = 1536, flutterTimeoutMs = 600_000,
   }) {
     this.database = database;
@@ -304,10 +323,17 @@ export class Orchestrator {
       project_profile: 'flutter_mobile',
     };
     this.database.createProject(project);
+    const advancedPlanning = builderTaskPolicy(specContent).tier === 'advanced';
+    const planningDependencies = [taskId(id, 'architecture'), taskId(id, 'ux')];
+    if (advancedPlanning) planningDependencies.push(taskId(id, 'data-model'), taskId(id, 'test-strategy'));
     this.database.createTasks([
       { id: taskId(id, 'architecture'), project_id: id, name: 'Mobile Architecture', role: 'architecture', allowed_paths: ['ARCHITECTURE.md'] },
       { id: taskId(id, 'ux'), project_id: id, name: 'Mobile UX', role: 'ux', allowed_paths: ['UX_SPEC.md'] },
-      { id: taskId(id, 'coordinator'), project_id: id, name: 'Mobile Coordinator', role: 'coordinator', allowed_paths: ['TASK_PLAN.json'], depends_on: [taskId(id, 'architecture'), taskId(id, 'ux')] },
+      ...(advancedPlanning ? [
+        { id: taskId(id, 'data-model'), project_id: id, name: 'Data Contracts', role: 'data_model', allowed_paths: ['DATA_MODEL.md'] },
+        { id: taskId(id, 'test-strategy'), project_id: id, name: 'Test Strategy', role: 'test_strategy', allowed_paths: ['TEST_STRATEGY.md'] },
+      ] : []),
+      { id: taskId(id, 'coordinator'), project_id: id, name: 'Mobile Coordinator', role: 'coordinator', allowed_paths: ['TASK_PLAN.json'], depends_on: planningDependencies },
     ]);
     this.#syncProjectState(id, workspace);
     fs.appendFileSync(path.join(workspace, '.git', 'info', 'exclude'), '\nPROJECT_STATE.json\n', 'utf8');
@@ -449,7 +475,8 @@ export class Orchestrator {
     const checkpointCommit = git(workspace, ['rev-parse', 'HEAD']);
     const currentTask = this.database.getTask(currentTaskId);
     const contextPackage = buildContextPackage({
-      workspace, role, task: currentTask, baseRef: role === 'architecture' || role === 'ux' ? null : checkpointCommit,
+      workspace, role, task: currentTask,
+      baseRef: ['architecture', 'ux', 'data_model', 'test_strategy'].includes(role) ? null : checkpointCommit,
     });
     const packagedPrompt = `${prompt}\n\n${contextPackage.prompt}`;
     this.database.updateTask(currentTaskId, {
@@ -558,28 +585,29 @@ export class Orchestrator {
     // it here could discard a plan the running graph depends on.
     if (this.database.listTasks(projectId).some(task => task.role === 'flutter_builder')) return;
     const planPath = path.join(workspace, 'TASK_PLAN.json');
-    const limit = builderTaskLimit(this.database.getProject(projectId).prompt);
+    const policy = builderTaskPolicy(this.database.getProject(projectId).prompt);
+    const { minTasks, maxTasks: limit, targetParallelism } = policy;
     let correction = '';
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       if (!fs.existsSync(planPath)) {
         await this.#runAgent({
           projectId, taskKey: 'coordinator', agentName: 'Coordinator Agent', role: 'coordinator', workspace,
-          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md and UX_SPEC.md. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create 2 to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum and the plan is rejected above it, so do not over-split the MVP. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, coordinator, integration, test, repair or reviewer. The plan is rejected unless at least two tasks are independent of each other, so avoid a single foundation task that everything else depends on. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow to a builder and require an integration_test/<flow-name>_test.dart output that exercises the real feature boundaries and persistent data path. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
+          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md, UX_SPEC.md, DATA_MODEL.md and TEST_STRATEGY.md when present. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create ${Math.max(2, minTasks)} to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum. The dependency graph must reach width ${targetParallelism}: at least ${targetParallelism} tasks must be runnable together with disjoint paths. Split by feature/module ownership, not by technical layer, and keep shared shell files with one owner. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, data-model, test-strategy, coordinator, integration, test, repair or reviewer. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow and acceptance criterion to a builder; require integration_test/<flow-name>_test.dart outputs that exercise real feature boundaries and persistence. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
         });
         this.#commitArtifact(workspace, 'TASK_PLAN.json', 'docs: add coordinated task plan');
       }
       try {
-        readTaskPlan(workspace, { maxTasks: limit });
+        readTaskPlan(workspace, { maxTasks: limit, minTasks, minParallelTasks: targetParallelism });
         return;
       } catch (error) {
         this.database.addEvent(projectId, 'task_plan.rejected', {
-          attempt, max_tasks: limit, error: error.message,
+          attempt, min_tasks: minTasks, max_tasks: limit, target_parallelism: targetParallelism, error: error.message,
         });
         if (attempt === 2) throw new Error(`TASK_PLAN.json sözleşmeye uymuyor: ${error.message}`);
         fs.rmSync(planPath, { force: true });
         git(workspace, ['add', 'TASK_PLAN.json']);
         if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: discard rejected task plan']);
-        correction = ` The previous TASK_PLAN.json was rejected: ${error.message} Produce a corrected plan with at most ${limit} tasks.`;
+        correction = ` The previous TASK_PLAN.json was rejected: ${error.message} Produce a corrected plan with ${minTasks}-${limit} tasks and graph width ${targetParallelism}.`;
       }
     }
   }
@@ -588,7 +616,12 @@ export class Orchestrator {
     const existing = this.database.listTasks(projectId);
     if (existing.some(task => task.role === 'flutter_builder')) return;
     const project = this.database.getProject(projectId);
-    const plan = readTaskPlan(workspace, { maxTasks: builderTaskLimit(project.prompt) });
+    const policy = builderTaskPolicy(project.prompt);
+    const plan = readTaskPlan(workspace, {
+      maxTasks: policy.maxTasks,
+      minTasks: policy.minTasks,
+      minParallelTasks: policy.targetParallelism,
+    });
     const builders = plan.tasks.map(task => ({
       id: taskId(projectId, task.id), project_id: projectId, name: task.title,
       role: 'flutter_builder', status: 'pending', allowed_paths: task.allowed_paths,
@@ -1212,49 +1245,52 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         this.#ensureIntegrationTestDependency(workspace);
         warmBuild = this.#startWarmBuild(id, workspace);
       }
-      const architectureWorkspace = this.#createWorktree(workspace, projectRoot, 'architecture');
-      const uxWorkspace = this.#createWorktree(workspace, projectRoot, 'ux');
+      const planningAgents = [
+        {
+          key: 'architecture', role: 'architecture', name: 'Architecture Agent', artifact: 'ARCHITECTURE.md',
+          commit: 'docs: add architecture plan',
+          prompt: 'Read PROJECT_SPEC.md and USER_FLOWS.json. Produce only ARCHITECTURE.md. Define feature-first boundaries, dependency direction, file ownership, cross-feature contracts, platform services, implementation risks and integration points. Keep data-schema details in DATA_MODEL.md and test-case details in TEST_STRATEGY.md when those agents are present. Do not implement the application.',
+        },
+        {
+          key: 'ux', role: 'ux', name: 'UX Agent', artifact: 'UX_SPEC.md', commit: 'docs: add UX plan',
+          prompt: 'Read PROJECT_SPEC.md and USER_FLOWS.json. Produce only UX_SPEC.md. Turn the Design DNA, tokens, screen-state matrix and responsive rules into a distinctive component and interaction system. Define every screen/state, content hierarchy, accessibility behavior and cross-feature entity selection. Include machine-testable UI checks separately from manual inspection suggestions. Do not implement the application.',
+        },
+        {
+          key: 'data-model', role: 'data_model', name: 'Data Contract Agent', artifact: 'DATA_MODEL.md',
+          commit: 'docs: add data contract',
+          prompt: 'Read PROJECT_SPEC.md and USER_FLOWS.json. Produce only DATA_MODEL.md. Define typed entities, invariants, identifiers, relationships, indexes, transactions, repository interfaces, persistence lifecycle, migrations, seed policy and failure behavior. Map every persistent critical-flow step to its data contract. Do not implement the application.',
+        },
+        {
+          key: 'test-strategy', role: 'test_strategy', name: 'Test Strategy Agent', artifact: 'TEST_STRATEGY.md',
+          commit: 'docs: add test strategy',
+          prompt: 'Read PROJECT_SPEC.md, USER_FLOWS.json and ACCEPTANCE_CRITERIA.json. Produce only TEST_STRATEGY.md. Build acceptance-criterion-to-module traceability; specify unit, widget and integration tests, fixtures, real-persistence boundaries, screen-state coverage and deterministic evidence. Every critical flow must map to one integration_test file. Do not implement the application.',
+        },
+      ].filter(agent => this.database.getTask(taskId(id, agent.key)));
 
-      this.#readyTasks(id, ['architecture', 'ux'], 2);
-
-      await Promise.all([
-        fs.existsSync(path.join(architectureWorkspace, 'ARCHITECTURE.md')) && !gitChanged(architectureWorkspace)
+      const planningRuns = planningAgents.map(agent => ({
+        ...agent,
+        workspace: this.#createWorktree(workspace, projectRoot, agent.key),
+      }));
+      this.#readyTasks(id, planningRuns.map(agent => agent.key), planningRuns.length);
+      await Promise.all(planningRuns.map(agent => (
+        fs.existsSync(path.join(agent.workspace, agent.artifact)) && !gitChanged(agent.workspace)
           ? Promise.resolve()
           : this.#runAgent({
-          projectId: id,
-          taskKey: 'architecture',
-          agentName: 'Architecture Agent',
-          role: 'architecture',
-          workspace: architectureWorkspace,
-          prompt: `Read PROJECT_SPEC.md and USER_FLOWS.json when present. Produce only ARCHITECTURE.md. Define the minimal architecture, file structure, data model, cross-feature ID/reference contracts, implementation order, integration-test strategy for every critical user flow, local run commands, risks, and explicit scope boundaries. Do not create or edit any other file. Do not implement the application.`,
-        }).then(() => {
-          this.#commitArtifact(architectureWorkspace, 'ARCHITECTURE.md', 'docs: add architecture plan');
-          this.#completeTask(id, 'architecture', architectureWorkspace);
-        }),
-        fs.existsSync(path.join(uxWorkspace, 'UX_SPEC.md')) && !gitChanged(uxWorkspace)
-          ? Promise.resolve()
-          : this.#runAgent({
-          projectId: id,
-          taskKey: 'ux',
-          agentName: 'UX Agent',
-          role: 'ux',
-          workspace: uxWorkspace,
-          prompt: `Read PROJECT_SPEC.md and USER_FLOWS.json when present. Produce only UX_SPEC.md. Define screens, states, interactions, responsive behavior, visual direction, accessibility requirements, copy guidance, and a UI acceptance checklist. For every cross-feature reference, specify whether the user selects an existing entity or enters free text; never present database IDs as text fields. UX_SPEC.md is guidance, not the acceptance contract: PROJECT_SPEC.md is. Put in the acceptance checklist only items a widget or integration test can verify, and place anything needing manual or assistive-technology inspection (screen readers, font scaling, external keyboards) under a clearly marked "Manuel kontrol önerileri" heading so no gate treats it as a requirement. Do not create or edit any other file. Do not implement the application.`,
-        }).then(() => {
-          this.#commitArtifact(uxWorkspace, 'UX_SPEC.md', 'docs: add UX plan');
-          this.#completeTask(id, 'ux', uxWorkspace);
-        }),
-      ]);
-
-      if (this.database.getTask(taskId(id, 'architecture')).status !== 'completed') {
-        this.#completeTask(id, 'architecture', architectureWorkspace);
+            projectId: id, taskKey: agent.key, agentName: agent.name,
+            role: agent.role, workspace: agent.workspace, prompt: agent.prompt,
+          }).then(() => {
+            this.#commitArtifact(agent.workspace, agent.artifact, agent.commit);
+            this.#completeTask(id, agent.key, agent.workspace);
+          })
+      )));
+      for (const agent of planningRuns) {
+        if (this.database.getTask(taskId(id, agent.key)).status !== 'completed') {
+          this.#completeTask(id, agent.key, agent.workspace);
+        }
+        if (branchAhead(workspace, `agent/${agent.key}`)) {
+          git(workspace, ['merge', '--no-edit', `agent/${agent.key}`]);
+        }
       }
-      if (this.database.getTask(taskId(id, 'ux')).status !== 'completed') {
-        this.#completeTask(id, 'ux', uxWorkspace);
-      }
-
-      if (branchAhead(workspace, 'agent/architecture')) git(workspace, ['merge', '--no-edit', 'agent/architecture']);
-      if (branchAhead(workspace, 'agent/ux')) git(workspace, ['merge', '--no-edit', 'agent/ux']);
 
       this.#readyTasks(id, ['coordinator'], 1);
       await this.#produceTaskPlan(id, workspace);

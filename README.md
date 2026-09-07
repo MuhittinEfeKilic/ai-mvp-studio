@@ -26,6 +26,13 @@ dönüşür ve incelemenin bloklayabileceği tek liste olur. Bu yüzden maddeler
 gözlemlenebilir ürün davranışı anlatmalıdır; toolchain sonuçları `Kalite
 Gereksinimleri` bölümüne aittir.
 
+Mobil template v2; özellik modülleri, iş kuralları, ekran durum matrisi, veri
+sözleşmeleri, tasarım DNA/tokenları ve test izlenebilirliğini de zorunlu kılar.
+`complexity_tier` (`simple`, `standard`, `advanced`) builder görev sayısını;
+`target_parallelism` (2–6) doğrulanması gereken gerçek görev grafiği genişliğini
+belirler. Varsayılan `advanced` profil 4–8 builder görevi ve en az dört eşzamanlı
+çalışabilir görev ister. Eski v1 spec'ler geriye uyumlu çalışır.
+
 ## Kapsam
 
 - Yerel panelden PROJECT_SPEC.md yükleme, doğrulama ve üretimi başlatma
@@ -51,7 +58,9 @@ PROJECT_SPEC.md ─→ USER_FLOWS.json + ACCEPTANCE_CRITERIA.json
 flutter create iskeleti (orchestrator) ──→ Gradle ısınması (arka planda)
         ↓
   ├─ Architecture Agent ─→ ARCHITECTURE.md
-  └─ UX Agent ───────────→ UX_SPEC.md            (paralel)
+  ├─ UX Agent ───────────→ UX_SPEC.md
+  ├─ Data Contract Agent ─→ DATA_MODEL.md         (advanced: dördü paralel)
+  └─ Test Strategy Agent → TEST_STRATEGY.md
         ↓
 Coordinator Agent ─→ TASK_PLAN.json ─→ flutter pub add
         ↓
@@ -85,13 +94,14 @@ planda ısıtır. Paket bağımlılıkları `TASK_PLAN.json` içindeki `dependen
 alanından okunup `flutter pub add` ile kurulur; hiçbir builder `pubspec.yaml`
 sahiplenemez.
 
-Architecture ve UX agent'ları ayrı Git worktree'lerinde çalışır ve yalnızca kendi
-plan dosyalarını değiştirebilir. Coordinator doğrulanan `TASK_PLAN.json` dosyasını
+Planlama agent'ları ayrı Git worktree'lerinde çalışır ve yalnızca kendi plan
+dosyalarını değiştirebilir. Advanced profilde Architecture, UX, Data Contract ve
+Test Strategy aynı anda çalışır. Coordinator bu belgeleri birleştirerek doğrulanan `TASK_PLAN.json` dosyasını
 üretir. Scheduler bağımsız Flutter Builder görevlerini ayrı worktree'lerde paralel
 çalıştırır ve biten görevin slotunu hemen serbest bırakır. Plan sözleşmesi
 paralelliği zorunlu kılar: birbirine bağlı olmayan görevler aynı yolları
-sahiplenemez (iç içe yollar da çakışma sayılır) ve üç veya daha fazla görevli
-tamamen seri plan reddedilir. Reviewer, cihaz kapısı APK'yı çalıştırırken eş
+sahiplenemez (iç içe yollar da çakışma sayılır); v2 planlarında görev sayısı ve
+grafik genişliği spec'teki profile göre mekanik olarak doğrulanır. Reviewer, cihaz kapısı APK'yı çalıştırırken eş
 zamanlı olarak incelemesini yapar. Integration, Flutter Test, koşullu Repair ve Mobile Reviewer aşamaları
 bu grafiğin devamında çalışır.
 
@@ -123,8 +133,9 @@ mekanizmayla tekrar denenebilir.
 
 ## Koordineli görev modeli
 
-Yeni projeler varsayılan olarak `flutter_mobile` profiliyle açılır. Architecture ve
-UX görevleri paralel çalışır; Coordinator ikisi tamamlandığında, Builder'lar plan
+Yeni projeler varsayılan olarak `flutter_mobile` profiliyle açılır. V1'de Architecture
+ve UX; v2/advanced profilde bunlara ek olarak Data Contract ve Test Strategy görevleri
+paralel çalışır. Coordinator planlama görevleri tamamlandığında, Builder'lar plan
 üretildiğinde, Integration bütün Builder'lar bittiğinde hazır hale gelir. Scheduler
 aynı anda çalışacak görevlerin `allowed_paths` alanlarını karşılaştırır ve çakışan
 dosya sahipliklerini paralel başlatmaz.
@@ -255,6 +266,8 @@ paralel builder sayısı (`MVP_STUDIO_MAX_PARALLEL_BUILDERS`) ve tüm sistemdeki
 Codex süreci sayısı (`MVP_STUDIO_MAX_CONCURRENT_AGENTS`). Sonuncusu diğer ikisinin
 çarpımını sınırlayan üst kapıdır. Bir çalışmanın token sınırı
 `MVP_STUDIO_PROJECT_TOKEN_BUDGET` (varsayılan 1.500.000, 0 = sınırsız).
+Varsayılanlar proje başına 4 builder ve sistem genelinde 5 Codex sürecidir; kaynakları
+kısıtlı makinelerde `.env` üzerinden düşürülebilir.
 
 Terminalde aşağıdaki satır göründüğünde sunucu hazırdır:
 

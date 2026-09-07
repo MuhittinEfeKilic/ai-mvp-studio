@@ -4,7 +4,17 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ensureProjectGitignore, qualityFailureSignature, runFlutterAsync } from '../src/orchestrator.mjs';
+import {
+  builderTaskPolicy, ensureProjectGitignore, qualityFailureSignature, runFlutterAsync,
+} from '../src/orchestrator.mjs';
+
+test('builder policy scales v2 advanced specs without changing legacy limits', () => {
+  assert.deepEqual(builderTaskPolicy('short legacy spec'), {
+    tier: 'legacy', minTasks: 1, maxTasks: 3, targetParallelism: 1,
+  });
+  const advanced = builderTaskPolicy('---\nspec_version: "2.0"\ncomplexity_tier: "advanced"\ntarget_parallelism: "5"\n---');
+  assert.deepEqual(advanced, { tier: 'advanced', minTasks: 5, maxTasks: 8, targetParallelism: 5 });
+});
 
 test('quality failure signature ignores timing noise but changes with diagnostics', () => {
   const report = details => ({ checks: {

@@ -3,12 +3,14 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const ROLE_DOCUMENTS = Object.freeze({
-  architecture: ['PROJECT_SPEC.md'],
-  ux: ['PROJECT_SPEC.md'],
-  coordinator: ['PROJECT_SPEC.md', 'ARCHITECTURE.md', 'UX_SPEC.md'],
-  flutter_builder: ['PROJECT_SPEC.md', 'ARCHITECTURE.md', 'UX_SPEC.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
-  builder: ['PROJECT_SPEC.md', 'ARCHITECTURE.md', 'UX_SPEC.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
-  integration: ['ARCHITECTURE.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
+  architecture: ['PROJECT_SPEC.md', 'USER_FLOWS.json'],
+  ux: ['PROJECT_SPEC.md', 'USER_FLOWS.json'],
+  data_model: ['PROJECT_SPEC.md', 'USER_FLOWS.json'],
+  test_strategy: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'ACCEPTANCE_CRITERIA.json'],
+  coordinator: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'ARCHITECTURE.md', 'UX_SPEC.md', 'DATA_MODEL.md', 'TEST_STRATEGY.md'],
+  flutter_builder: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'ARCHITECTURE.md', 'UX_SPEC.md', 'DATA_MODEL.md', 'TEST_STRATEGY.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
+  builder: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'ARCHITECTURE.md', 'UX_SPEC.md', 'DATA_MODEL.md', 'TEST_STRATEGY.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
+  integration: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'ARCHITECTURE.md', 'UX_SPEC.md', 'DATA_MODEL.md', 'TEST_STRATEGY.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
   test: ['PROJECT_SPEC.md', 'TASK_PLAN.json', 'PROJECT_STATE.json'],
   repair: ['PROJECT_SPEC.md', 'TEST_REPORT.md', 'TEST_REPORT.json', 'PROJECT_STATE.json'],
   device_repair: ['PROJECT_SPEC.md', 'USER_FLOWS.json', 'DEVICE_REPORT.json', 'TEST_REPORT.json', 'PROJECT_STATE.json'],

@@ -22,8 +22,11 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
   spec → planlama → paralel builder → kalite kapısı → cihaz kapısı → inceleme →
   kullanıcı onayı. Kullanıcı geri bildirimi turu da cihaz kapısından geçerek
   gerçek bir kusuru düzeltmiştir.
-- Studio regresyonu: **97/97 test** (7 Eylül 2026). Tam paket Windows üzerinde
-  takılmadan tamamlandı; Codex ve Flutter hung-process regresyonları geçti.
+- Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
+  ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
+  4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
+- Studio regresyonu: **100/100 test** (7 Eylül 2026). Tam paket Windows üzerinde
+  takılmadan tamamlandı; v2 spec/policy ve advanced paralel planlama regresyonları geçti.
 
 ### Projeler
 
@@ -52,19 +55,24 @@ Değiştirmeden önce ilgili testi okuyun.
 
 Mobil profilde `device_test: "required"` zorunludur.
 
+Spec v2 ayrıca özellik modülleri, iş kuralları, ekran durum matrisi, veri
+sözleşmeleri, ürün-özel tasarım DNA/tokenları ve test izlenebilirliğini zorunlu
+kılar. `complexity_tier` görev ölçeğini, `target_parallelism` ise validator'ın
+kabul edeceği minimum grafik genişliğini belirler. V1 spec'ler eski davranışı korur.
+
 ### Görev planı sözleşmesi (`src/task-plan.mjs`)
 
 `TASK_PLAN.json` şu kurallara uymazsa reddedilir ve Coordinator'dan **gerekçesiyle
 bir kez daha** istenir:
 
-- Görev sayısı `builderTaskLimit` sınırını aşamaz (spec < 15.000 karakter ise 3,
-  değilse 5). Bu sınır aynı anda Coordinator prompt'una da yazılır — ikisi
-  ayrışırsa plan reddedilir ve proje kurtarılamaz hâle gelirdi.
+- V1 spec'lerde görev üst sınırı içerik <15.000 karakterse 3, değilse 5'tir.
+  V2'de `simple` 2–3, `standard` 3–5, `advanced` 4–8 görev üretir;
+  `target_parallelism` kadar görevin gerçekten eşzamanlı çalışabilmesi gerekir.
 - Birbirine bağlı **olmayan** görevler aynı yolları sahiplenemez. İç içe yollar da
   çakışma sayılır: `test/features/**` ile `test/features/detail/**` iki bağımsız
   göreve verilemez.
-- Üç veya daha fazla görevli plan tamamen seri olamaz; en az iki görev birbirinden
-  bağımsız olmalıdır.
+- Üç veya daha fazla görevli legacy plan tamamen seri olamaz; v2 planları ayrıca
+  profile özgü minimum görev sayısı ve grafik genişliğini geçmek zorundadır.
 - Hiçbir görev `pubspec.yaml`/`pubspec.lock` sahiplenemez; paketler plandaki
   `dependencies` alanında bildirilir, orchestrator `flutter pub add` ile kurar.
 - Döngüsel bağımlılık reddedilir (eskiden scheduler'ı kilitlerdi).
@@ -118,6 +126,9 @@ Bunlar tartışıldı ve bilerek böyle bırakıldı. Değiştirmeden önce nede
 - **`UX_SPEC.md` rehberdir, sözleşme `PROJECT_SPEC.md`'dir.** UX agent'ı kabul
   listesine yalnız testle doğrulanabilir maddeleri koyar; ekran okuyucu, yazı
   ölçeği gibi manuel kontroller ayrı başlık altında öneridir.
+- **Tasarım çeşitliliği rastgele tema seçimi değildir.** Template ürün-özel Tasarım
+  DNA'sı, kaçınılacak klişeler ve imza öğesi ister; ortak tokenlar tutarlılık sağlar
+  fakat ekranları tek bir yerleşim kalıbına zorlamaz.
 - **Toolchain dosyaları ürün kapsamı dışıdır:** `android/app/src/debug/**`,
   `android/app/src/profile/**`, üretilmiş dosyalar, `test/scaffold_test.dart`.
   Debug manifesti INTERNET iznini meşru olarak taşır; ürün izinleri yalnız
@@ -245,6 +256,7 @@ sınırı `MVP_STUDIO_CODEX_TIMEOUT_MS` (varsayılan 60 dakika), bir çalışman
 sınırı `MVP_STUDIO_PROJECT_TOKEN_BUDGET` (varsayılan 1.500.000, 0 = sınırsız).
 Flutter/Gradle komut sınırı `MVP_STUDIO_FLUTTER_TIMEOUT_MS` ile belirlenir
 (varsayılan 10 dakika).
+Varsayılan proje içi builder sınırı 4, sistem genelindeki agent sınırı 5'tir.
 
 ## Hızlı komutlar
 

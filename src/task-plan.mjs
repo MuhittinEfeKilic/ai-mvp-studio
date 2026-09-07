@@ -5,7 +5,8 @@ import { pathsOverlap } from './task-scheduler.mjs';
 
 const TASK_ID = /^[a-z0-9][a-z0-9-]{1,48}$/;
 const RESERVED_TASK_IDS = new Set([
-  'architecture', 'ux', 'coordinator', 'integration', 'test', 'repair', 'reviewer',
+  'architecture', 'ux', 'data-model', 'test-strategy', 'coordinator',
+  'integration', 'test', 'repair', 'reviewer',
 ]);
 
 /** Files the orchestrator owns; a builder claiming them serialises the graph. */
@@ -82,7 +83,7 @@ export function taskGraphWidth(tasks) {
  * three independent builders were serialised to x1.00 because one owned
  * `test/features/products/**` while another owned `test/features/products/detail/**`.
  */
-function assertParallelizable(tasks) {
+function assertParallelizable(tasks, minParallelTasks = 1) {
   const conflicts = [];
   for (const [a, b] of concurrentTaskPairs(tasks)) {
     for (const left of a.allowed_paths) {
@@ -104,6 +105,13 @@ function assertParallelizable(tasks) {
       + 'görevde en az iki görev birbirinden bağımsız olmalı ki paralel çalışabilsinler.',
     );
   }
+  const width = taskGraphWidth(tasks);
+  if (width < minParallelTasks) {
+    throw new Error(
+      `TASK_PLAN.json hedeflenen paralelliği sağlamıyor: grafik genişliği ${width}, `
+      + `gereken en az ${minParallelTasks}. Bağımsız ve ayrık path sahibi görevler oluşturun.`,
+    );
+  }
 }
 
 function normalizeTaskId(value) {
@@ -115,9 +123,9 @@ function normalizedPatterns(patterns) {
     .filter(value => value && !value.startsWith('/') && !value.includes('..'));
 }
 
-export function validateTaskPlan(rawPlan, { maxTasks = 5 } = {}) {
+export function validateTaskPlan(rawPlan, { maxTasks = 5, minTasks = 1, minParallelTasks = 1 } = {}) {
   const tasks = Array.isArray(rawPlan?.tasks) ? rawPlan.tasks : [];
-  if (!tasks.length) throw new Error('TASK_PLAN.json en az bir görev içermeli.');
+  if (tasks.length < minTasks) throw new Error(`TASK_PLAN.json en az ${minTasks} görev içermeli.`);
   if (tasks.length > maxTasks) throw new Error(`TASK_PLAN.json en fazla ${maxTasks} görev içerebilir.`);
   const ids = new Set();
   const normalized = tasks.map((task, index) => {
@@ -156,7 +164,7 @@ export function validateTaskPlan(rawPlan, { maxTasks = 5 } = {}) {
     }
   }
   assertAcyclic(normalized);
-  assertParallelizable(normalized);
+  assertParallelizable(normalized, minParallelTasks);
   return {
     version: 1,
     profile: rawPlan.profile || 'flutter_mobile',

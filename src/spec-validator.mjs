@@ -25,6 +25,20 @@ const MOBILE_REQUIRED_METADATA = [
   ['device_test', 'Cihaz testi kararı'],
 ];
 
+const MOBILE_V2_REQUIRED_SECTIONS = [
+  'Özellik Modülleri ve Sınırlar',
+  'İş Kuralları ve Değişmezler',
+  'Ekran Durum Matrisi',
+  'Veri Modeli ve Sözleşmeler',
+  'Tasarım Sistemi ve Görsel Yön',
+  'Test Stratejisi ve İzlenebilirlik',
+];
+
+function specMajorVersion(value) {
+  const match = String(value ?? '').match(/^(\d+)/);
+  return match ? Number(match[1]) : 1;
+}
+
 function normalize(value) {
   return value.trim().toLocaleLowerCase('tr-TR');
 }
@@ -137,6 +151,38 @@ export function validateSpec(markdown) {
       blocking_issues.push({ section: 'Frontmatter', message: '`device_test` değeri mobil profil için `required` olmalıdır.' });
     }
 
+    if (specMajorVersion(metadata.spec_version) >= 2) {
+      for (const title of MOBILE_V2_REQUIRED_SECTIONS) {
+        const content = sections.get(normalize(title));
+        const passed = Boolean(content && content.length >= 20);
+        checks.push({ name: title, passed });
+        if (!passed) blocking_issues.push({
+          section: title,
+          message: `Mobil spec v2 için “${title}” bölümü zorunludur.`,
+        });
+      }
+      const tier = normalize(metadata.complexity_tier ?? '');
+      if (!['simple', 'standard', 'advanced'].includes(tier)) {
+        blocking_issues.push({
+          section: 'Frontmatter',
+          message: '`complexity_tier` simple, standard veya advanced olmalıdır.',
+        });
+      }
+      const parallelism = Number(metadata.target_parallelism);
+      if (!Number.isInteger(parallelism) || parallelism < 2 || parallelism > 6) {
+        blocking_issues.push({
+          section: 'Frontmatter',
+          message: '`target_parallelism` 2 ile 6 arasında bir tam sayı olmalıdır.',
+        });
+      }
+      if (!['auto', 'guided', 'custom'].includes(normalize(metadata.design_mode ?? ''))) {
+        blocking_issues.push({
+          section: 'Frontmatter',
+          message: '`design_mode` auto, guided veya custom olmalıdır.',
+        });
+      }
+    }
+
     const criticalFlows = parseCriticalUserFlows(text);
     const validFlows = criticalFlows.filter(flow => flow.steps.length >= 3 && flow.expected);
     checks.push({ name: 'Çalıştırılabilir kritik kullanıcı akışları', passed: validFlows.length > 0 });
@@ -158,7 +204,13 @@ export function validateSpec(markdown) {
     blocking_issues.push({ section: 'Açık Kararlar', message: 'Kodlama başlamadan önce açık kararlar kapatılmalıdır.' });
   }
 
-  const recommended = ['Hedef Kullanıcılar', 'Veri Modeli', 'Tasarım Yönü', 'Kapsam Dışı'];
+  const recommended = ['Hedef Kullanıcılar', 'Kapsam Dışı'];
+  const dataSection = sections.get(normalize('Veri Modeli'))
+    || sections.get(normalize('Veri Modeli ve Sözleşmeler'));
+  if (!dataSection) warnings.push('Önerilen “Veri Modeli” bölümü bulunamadı.');
+  const designSection = sections.get(normalize('Tasarım Yönü'))
+    || sections.get(normalize('Tasarım Sistemi ve Görsel Yön'));
+  if (!designSection) warnings.push('Önerilen “Tasarım Yönü” bölümü bulunamadı.');
   for (const title of recommended) {
     if (!sections.get(normalize(title))) warnings.push(`Önerilen “${title}” bölümü bulunamadı.`);
   }

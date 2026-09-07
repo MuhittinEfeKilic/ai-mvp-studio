@@ -68,6 +68,28 @@ test('a fully serial plan of three or more tasks is rejected', () => {
   assert.equal(validateTaskPlan(parallelPlan()).tasks.length, 3);
 });
 
+test('advanced policy enforces task count and real graph width', () => {
+  const plan = parallelPlan();
+  assert.throws(
+    () => validateTaskPlan(plan, { minTasks: 4, maxTasks: 8, minParallelTasks: 4 }),
+    /en az 4 görev/,
+  );
+  plan.tasks.push({
+    id: 'reports', allowed_paths: ['lib/features/reports/**'], depends_on: ['app-shell'],
+  });
+  assert.throws(
+    () => validateTaskPlan(plan, { minTasks: 4, maxTasks: 8, minParallelTasks: 4 }),
+    /grafik genişliği 3, gereken en az 4/,
+  );
+  plan.tasks[0].depends_on = [];
+  plan.tasks[1].depends_on = [];
+  plan.tasks[2].depends_on = [];
+  plan.tasks[3].depends_on = [];
+  assert.equal(validateTaskPlan(plan, {
+    minTasks: 4, maxTasks: 8, minParallelTasks: 4,
+  }).tasks.length, 4);
+});
+
 test('builders cannot own orchestrator files and dependencies are normalized', () => {
   const plan = parallelPlan();
   plan.tasks[0].allowed_paths = ['lib/app/**', 'pubspec.yaml'];

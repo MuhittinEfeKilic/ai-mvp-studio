@@ -3,12 +3,33 @@
 Son güncelleme: 7 Eylül 2026
 
 Bu listedeki doğrulanmış açıklar kapatılmıştır. Son tam kontrol: `npm run check`
-başarılı, `npm test` **97/97 PASS**.
+başarılı, `npm test` **100/100 PASS**.
 
 Bu liste, güncel mimari ve test incelemesinde doğrulanan işleri içerir. Maddeler
 öncelik sırasındadır. Bir madde tamamlandığında ilgili regresyon testi eklenmeli,
 `npm run check` ve `npm test` çalıştırılmalı, ardından `PROJECT_STATUS.md`
 güncellenmelidir.
+
+## P1 — Kompleks ürün template'i ve ölçeklenen paralel planlama
+
+- [x] Mobil template'i modül sınırları, iş kuralları, ekran durum matrisi, veri
+  sözleşmeleri, tasarım DNA/tokenları ve test izlenebilirliğiyle v2'ye yükselt.
+- [x] `complexity_tier` ve `target_parallelism` alanlarını doğrulanan pipeline
+  politikasına bağla; eski v1 spec'leri geriye uyumlu tut.
+- [x] Advanced projelerde Architecture, UX, Data Contract ve Test Strategy
+  agent'larını ayrı worktree'lerde paralel çalıştır.
+- [x] Coordinator'ın 4–8 görev üretmesini ve görev grafiğinin hedef genişliğe
+  gerçekten ulaştığını mekanik olarak doğrula.
+- [x] Builder, Coordinator ve Integration context'lerine yeni plan belgelerini ekle.
+- [x] Varsayılan proje içi builder sınırını 4'e, global agent sınırını 5'e çıkar.
+- [x] v2 doğrulama, plan genişliği, policy ve advanced orchestrator akışı için
+  regresyon testleri ekle.
+
+### Neden
+
+Yalnız ayrıntılı görsel prompt, kapsamlı uygulama üretmek için yeterli değildi.
+Modül sahipliği ve kabul/test izlenebilirliği tanımlanmadığında görevler ya aynı
+dosyalarda çakışıyor ya da özellik sınırları arasında eksik entegrasyon bırakıyordu.
 
 ## P0 — Reviewer kabul kriteri sınırını kapat
 

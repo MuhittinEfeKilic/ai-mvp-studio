@@ -30,11 +30,21 @@ class FakeRunner {
       fs.writeFileSync(path.join(workspace, 'ARCHITECTURE.md'), '# Architecture\n\nMinimal plan.');
     } else if (prompt.includes('Produce only UX_SPEC.md')) {
       fs.writeFileSync(path.join(workspace, 'UX_SPEC.md'), '# UX\n\nAccessible UI plan.');
+    } else if (prompt.includes('Produce only DATA_MODEL.md')) {
+      fs.writeFileSync(path.join(workspace, 'DATA_MODEL.md'), '# Data model\n\nTyped contracts.');
+    } else if (prompt.includes('Produce only TEST_STRATEGY.md')) {
+      fs.writeFileSync(path.join(workspace, 'TEST_STRATEGY.md'), '# Test strategy\n\nTraceable coverage.');
     } else if (prompt.includes('Produce only TASK_PLAN.json')) {
+      const advanced = prompt.includes('Create 4 to 8 coarse');
       fs.writeFileSync(path.join(workspace, 'TASK_PLAN.json'), JSON.stringify({
         version: 1,
         profile: 'flutter_mobile',
-        tasks: [{
+        tasks: advanced ? ['shell', 'records', 'insights', 'settings'].map((id, index) => ({
+          id: `feature-${id}`, title: `Feature ${id}`, prompt: `Create ${id}.`, depends_on: [],
+          allowed_paths: index === 0 ? ['index.html'] : [`lib/features/${id}.dart`],
+          required_outputs: index === 0 ? ['index.html'] : [`lib/features/${id}.dart`],
+          acceptance_checks: ['file exists'], priority: index,
+        })) : [{
           id: 'app-shell', title: 'App Shell', prompt: 'Create the test UI.', depends_on: [],
           allowed_paths: ['index.html', 'build/'],
           required_outputs: ['index.html', 'build/app/outputs/flutter-apk/app-debug.apk'],
@@ -42,7 +52,13 @@ class FakeRunner {
         }],
       }));
     } else if (prompt.includes('Complete only task')) {
-      fs.writeFileSync(path.join(workspace, 'index.html'), '<h1>Test MVP</h1>');
+      const output = prompt.match(/Required outputs: ([^,.\s]+\.dart)/)?.[1];
+      if (output) {
+        fs.mkdirSync(path.dirname(path.join(workspace, output)), { recursive: true });
+        fs.writeFileSync(path.join(workspace, output), 'class Feature {}\n');
+      } else {
+        fs.writeFileSync(path.join(workspace, 'index.html'), '<h1>Test MVP</h1>');
+      }
     }
     onEvent('turn.completed', { type: 'turn.completed' });
     return /Review the complete Flutter|response JSON only/i.test(prompt)
@@ -147,10 +163,16 @@ test('project creation persists executable user flows as an agent contract', asy
   const project = orchestrator.createProject('Flow Contract', spec);
   const contract = JSON.parse(fs.readFileSync(path.join(project.workspace_path, 'USER_FLOWS.json'), 'utf8'));
   assert.equal(contract.version, 1);
-  assert.equal(contract.flows.length, 2);
+  assert.equal(contract.flows.length, 3);
   assert.equal(contract.flows[0].steps.length, 4);
   assert.match(contract.flows[0].expected, /yeniden açılışta korunur/);
-  await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+  const completed = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+  assert.equal(completed.status, 'awaiting_user_review', completed.error);
+  assert.deepEqual(database.listAgentRuns(project.id).slice(0, 4).map(run => run.role).sort(), [
+    'architecture', 'data_model', 'test_strategy', 'ux',
+  ]);
+  assert.ok(fs.existsSync(path.join(project.workspace_path, 'DATA_MODEL.md')));
+  assert.ok(fs.existsSync(path.join(project.workspace_path, 'TEST_STRATEGY.md')));
 });
 
 test('context exhaustion pauses at a Git checkpoint and resumes without rerunning plans', async () => {

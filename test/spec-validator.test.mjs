@@ -34,7 +34,21 @@ test('approved mobile template contains all required mobile decisions', () => {
   const report = validateSpec(spec);
   assert.equal(report.ready, true, JSON.stringify(report.blocking_issues));
   assert.ok(report.checks.some(check => check.name === 'Mobil Platform Kararları' && check.passed));
-  assert.equal(parseCriticalUserFlows(spec).length, 2);
+  assert.equal(parseCriticalUserFlows(spec).length, 3);
+  assert.ok(report.checks.some(check => check.name === 'Tasarım Sistemi ve Görsel Yön' && check.passed));
+});
+
+test('mobile spec v2 rejects invalid complexity and parallelism controls', () => {
+  const spec = mobileTemplate
+    .replace('project_name: "MOBİL UYGULAMA ADI"', 'project_name: "Mobil Test"')
+    .replace('status: "draft"', 'status: "approved"')
+    .replace('complexity_tier: "advanced"', 'complexity_tier: "huge"')
+    .replace('target_parallelism: "4"', 'target_parallelism: "12"')
+    .replace(/# Açık Kararlar[\s\S]*$/, '# Açık Kararlar\n\nYok.');
+  const report = validateSpec(spec);
+  assert.equal(report.ready, false);
+  assert.ok(report.blocking_issues.some(issue => issue.message.includes('`complexity_tier`')));
+  assert.ok(report.blocking_issues.some(issue => issue.message.includes('`target_parallelism`')));
 });
 
 test('mobile spec is blocked when critical flows are not executable', () => {
