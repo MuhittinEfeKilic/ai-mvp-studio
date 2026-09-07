@@ -1,4 +1,5 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { killProcessTree } from './async-process-runner.mjs';
 
 export const DEFAULT_RUN_TIMEOUT_MS = 60 * 60_000;
 export const DEFAULT_VERSION_TIMEOUT_MS = 60_000;
@@ -8,14 +9,7 @@ export const DEFAULT_VERSION_TIMEOUT_MS = 60_000;
  * Windows, so killing only the direct child can leave the real worker running and
  * keep holding the concurrency slot.
  */
-export function killProcessTree(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  if (process.platform === 'win32' && child.pid) {
-    spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
-    return;
-  }
-  try { child.kill('SIGKILL'); } catch { /* already gone */ }
-}
+export { killProcessTree };
 
 function formatDuration(milliseconds) {
   return milliseconds >= 60_000
@@ -53,7 +47,10 @@ export class CodexRunner {
       }
       let output = '';
       let settled = false;
-      const timer = setTimeout(() => { killProcessTree(child); finish(null); }, this.versionTimeoutMs);
+      const timer = setTimeout(async () => {
+        await killProcessTree(child);
+        finish(null);
+      }, this.versionTimeoutMs);
       const finish = value => {
         if (settled) return;
         settled = true;
@@ -90,10 +87,11 @@ export class CodexRunner {
       let settled = false;
       let timedOut = false;
       // Without this the slot is held forever by a hung Codex process.
-      const timer = setTimeout(() => {
+      const timer = setTimeout(async () => {
         timedOut = true;
         onEvent('timeout', { timeout_ms: this.timeoutMs });
-        killProcessTree(child);
+        await killProcessTree(child);
+        fail(new Error(`Codex ${formatDuration(this.timeoutMs)} içinde tamamlanmadı ve süreç sonlandırıldı.`));
       }, this.timeoutMs);
       const settle = action => {
         if (settled) return;

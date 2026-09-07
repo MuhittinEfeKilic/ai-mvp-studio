@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ensureProjectGitignore, qualityFailureSignature } from '../src/orchestrator.mjs';
+import { ensureProjectGitignore, qualityFailureSignature, runFlutterAsync } from '../src/orchestrator.mjs';
 
 test('quality failure signature ignores timing noise but changes with diagnostics', () => {
   const report = details => ({ checks: {
@@ -29,4 +29,14 @@ test('project gitignore preserves custom rules and adds generated Flutter paths'
   assert.ok(lines.includes('build/'));
   assert.ok(lines.includes('QUALITY_LOGS/'));
   assert.equal(lines.length, new Set(lines).size);
+});
+
+test('a hung Flutter command times out without retaining the pipeline slot', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-flutter-timeout-'));
+  const result = await runFlutterAsync(
+    process.execPath, ['-e', 'setInterval(() => {}, 1000)'], workspace, 200,
+  );
+  assert.equal(result.timedOut, true);
+  assert.equal(result.status, null);
+  assert.match(result.stderr, /FLUTTER_TIMEOUT/);
 });

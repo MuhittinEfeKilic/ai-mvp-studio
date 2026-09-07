@@ -161,6 +161,17 @@ export function validateReviewerResult(raw = {}, { expectedCriteria = [] } = {})
   const criteria = normalizeCriteriaVerdicts(raw.criteria);
 
   if (expectedCriteria.length) {
+    const expected = new Set(expectedCriteria);
+    const counts = new Map();
+    for (const entry of criteria) counts.set(entry.id, (counts.get(entry.id) || 0) + 1);
+    const unknown = [...counts.keys()].filter(id => !expected.has(id));
+    if (unknown.length) {
+      throw reviewerError(`Reviewer bilinmeyen kabul kriterleri bildirdi: ${unknown.join(', ')}.`);
+    }
+    const duplicates = [...counts.entries()].filter(([, count]) => count > 1).map(([id]) => id);
+    if (duplicates.length) {
+      throw reviewerError(`Reviewer kabul kriterlerini birden fazla kez yanıtladı: ${duplicates.join(', ')}.`);
+    }
     const answered = new Set(criteria.map(entry => entry.id));
     const missing = expectedCriteria.filter(id => !answered.has(id));
     if (missing.length) {

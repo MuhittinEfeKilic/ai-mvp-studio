@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { runProcess } from './async-process-runner.mjs';
 import { RESUMABLE_PROJECT_STATUSES } from './database.mjs';
 import { selectReadyTasks } from './task-scheduler.mjs';
 import { normalizePackageDependencies, readTaskPlan, writeProjectState } from './task-plan.mjs';
@@ -68,22 +69,12 @@ function runFlutter(executable, args, workspace) {
 }
 
 /** Non-blocking variant, so a slow Gradle build can overlap the planning agents. */
-function runFlutterAsync(executable, args, workspace) {
-  return new Promise(resolve => {
-    const invocation = flutterInvocation(executable, args);
-    let child;
-    try {
-      child = spawn(invocation.command, invocation.args, { cwd: workspace, windowsHide: true });
-    } catch (error) {
-      resolve({ status: null, stdout: '', stderr: '', error });
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', chunk => { stdout += chunk; });
-    child.stderr.on('data', chunk => { stderr += chunk; });
-    child.once('error', error => resolve({ status: null, stdout, stderr, error }));
-    child.once('close', status => resolve({ status, stdout, stderr }));
+export function runFlutterAsync(executable, args, workspace, timeoutMs = 600_000) {
+  const invocation = flutterInvocation(executable, args);
+  return runProcess(invocation.command, invocation.args, {
+    cwd: workspace,
+    timeout: timeoutMs,
+    timeoutLabel: 'FLUTTER_TIMEOUT',
   });
 }
 
@@ -229,7 +220,7 @@ export class Orchestrator {
   constructor({
     database, runner, projectsDir, maxConcurrentRuns = 2, flutterChecker = null,
     deviceTester = null, maxConcurrentAgents = 3, maxParallelBuilders = 3, tokenBudget = 0,
-    deviceMinFreeMb = 1536,
+    deviceMinFreeMb = 1536, flutterTimeoutMs = 600_000,
   }) {
     this.database = database;
     this.runner = runner;
@@ -243,6 +234,7 @@ export class Orchestrator {
     this.busyProjects = new Set();
     this.tokenBudget = tokenBudget;
     this.deviceMinFreeMb = deviceMinFreeMb;
+    this.flutterTimeoutMs = flutterTimeoutMs;
     // Budget is per uninterrupted run: resuming is the user deciding to spend more.
     this.budgetBaseline = new Map();
     // Project and builder parallelism multiply; this caps the real Codex process
@@ -770,7 +762,7 @@ export class Orchestrator {
     const flutter = resolveFlutter(workspace);
     if (!flutter || !fs.existsSync(path.join(workspace, 'pubspec.yaml'))) return null;
     const startedAt = Date.now();
-    return runFlutterAsync(flutter, ['build', 'apk', '--debug'], workspace).then(result => {
+    return runFlutterAsync(flutter, ['build', 'apk', '--debug'], workspace, this.flutterTimeoutMs).then(result => {
       this.database.addEvent(projectId, 'warm_build.completed', {
         status: result.status === 0 ? 'PASS' : 'FAIL',
         seconds: Math.round((Date.now() - startedAt) / 1000),
@@ -855,7 +847,7 @@ export class Orchestrator {
     if (!flutter) return skipped('Flutter SDK bulunamadı. FLUTTER_BIN veya PATH ayarını kontrol edin.');
     const checks = {};
     const logs = {};
-    const dependencyResult = await runFlutterAsync(flutter, ['pub', 'get'], workspace);
+    const dependencyResult = await runFlutterAsync(flutter, ['pub', 'get'], workspace, this.flutterTimeoutMs);
     logs.pub_get = fullCommandOutput(dependencyResult);
     if (dependencyResult.status !== 0) {
       const details = commandDetails(dependencyResult);
@@ -867,7 +859,7 @@ export class Orchestrator {
       return { profile: 'flutter_mobile', checks, logs };
     }
     for (const [name, args] of [['analyze', ['analyze']], ['test', ['test']], ['apk', ['build', 'apk', '--debug']]]) {
-      const result = await runFlutterAsync(flutter, args, workspace);
+      const result = await runFlutterAsync(flutter, args, workspace, this.flutterTimeoutMs);
       logs[name] = fullCommandOutput(result);
       checks[name] = {
         status: result.status === 0 ? 'PASS' : 'FAIL', command: `flutter ${args.join(' ')}`,

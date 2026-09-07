@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { runProcess } from './async-process-runner.mjs';
 
 import {
   ensureBootedDevice, parseAdbDevices, prepareDeviceForTest, wipeAvdAfterTest,
@@ -180,50 +180,10 @@ function defaultRun(command, args, options = {}) {
   const invocation = process.platform === 'win32' && /\.(?:bat|cmd)$/i.test(command)
     ? { command: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command, ...args] }
     : { command, args };
-  return new Promise(resolve => {
-    let child;
-    let settled = false;
-    const timeoutMs = Number(options.timeout) || 600_000;
-    const spawnOptions = { ...options };
-    delete spawnOptions.timeout;
-    try {
-      child = spawn(invocation.command, invocation.args, {
-        windowsHide: true, ...spawnOptions,
-      });
-    } catch (error) {
-      resolve({ status: null, stdout: '', stderr: '', error });
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', chunk => { stdout += chunk; });
-    child.stderr.on('data', chunk => { stderr += chunk; });
-    const finish = result => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    child.once('error', error => finish({ status: null, stdout, stderr, error }));
-    child.once('close', status => finish({ status, stdout, stderr }));
-    const timer = setTimeout(() => {
-      const timeoutMessage = `DEVICE_TEST_TIMEOUT: süreç ${Math.round(timeoutMs / 1000)} saniyede tamamlanmadı.`;
-      if (process.platform === 'win32' && child.pid) {
-        const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
-          windowsHide: true, stdio: 'ignore',
-        });
-        killer.once('close', () => finish({
-          status: null, stdout, stderr: [stderr, timeoutMessage].filter(Boolean).join('\n'), timedOut: true,
-        }));
-        killer.once('error', error => {
-          child.kill('SIGKILL');
-          finish({ status: null, stdout, stderr: [stderr, timeoutMessage].filter(Boolean).join('\n'), timedOut: true, error });
-        });
-      } else {
-        child.kill('SIGKILL');
-        finish({ status: null, stdout, stderr: [stderr, timeoutMessage].filter(Boolean).join('\n'), timedOut: true });
-      }
-    }, timeoutMs);
+  return runProcess(invocation.command, invocation.args, {
+    ...options,
+    timeout: Number(options.timeout) || 600_000,
+    timeoutLabel: 'DEVICE_TEST_TIMEOUT',
   });
 }
 

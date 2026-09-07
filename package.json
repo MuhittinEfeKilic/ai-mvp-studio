@@ -9,7 +9,7 @@
     "dev": "node --watch src/server.mjs",
     "test": "node --test",
     "test:minimal-live": "node scripts/minimal-live-check.mjs",
-    "check": "node --check src/server.mjs && node --check src/orchestrator.mjs && node --check src/codex-runner.mjs && node --check src/spec-validator.mjs"
+    "check": "node scripts/check-sources.mjs"
   },
   "engines": { "node": ">=24" }
 }

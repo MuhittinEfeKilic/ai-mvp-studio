@@ -1,6 +1,6 @@
 # AI MVP Studio — Güncel Durum ve Handoff
 
-Son güncelleme: 29 Ağustos 2026
+Son güncelleme: 7 Eylül 2026
 
 ### Son cihaz ortamı kararı
 
@@ -22,8 +22,8 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
   spec → planlama → paralel builder → kalite kapısı → cihaz kapısı → inceleme →
   kullanıcı onayı. Kullanıcı geri bildirimi turu da cihaz kapısından geçerek
   gerçek bir kusuru düzeltmiştir.
-- Studio regresyonu: **88/88 test** (29 Ağustos 2026, Node 24.15).
-  Yeni oturum bunu güncel ortamda yeniden doğrulamalıdır.
+- Studio regresyonu: **97/97 test** (7 Eylül 2026). Tam paket Windows üzerinde
+  takılmadan tamamlandı; Codex ve Flutter hung-process regresyonları geçti.
 
 ### Projeler
 
@@ -31,7 +31,8 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 | --- | --- | --- | --- |
 | `7b6df59adcb9` | Ders Notu (2. koşu) | `awaiting_user_review` | Yeni sözleşmelerin ilk gerçek doğrulaması; tek incelemede temiz geçti |
 | `c67140223074` | Ders Notu (1. koşu) | `awaiting_user_review` | İlk tam uçtan uca başarı; cihaz kapısı PASS; feedback turu gerçek kusuru düzeltti |
-| `b9c53b9a14bf` | Stok Cep | `failed` | Ortam arızası sınıflandırmasının doğduğu vaka (emülatör koptu, `aapt` çöktü) |
+| `f87128fb48bf` | Bakım Takvimi | `interrupted` | Beş cihaz akışından dördü tamamlandıktan sonra Studio yeniden başlatıldığı için checkpoint'te durdu; son ölçümde 4973 MB boş alan vardı |
+| `b9c53b9a14bf` | Stok Cep | `failed` | Eski cihaz koşusunda emülatör çevrimdışı kaldı ve prerelease `aapt` çöktü; kayıt güncel ortam sınıflandırmasından önce oluştu |
 | `a87cfbf38ea4` | Servis Cep | `awaiting_user_review` | Foreign-key kusurunun bulunduğu vaka; elle düzeltildi, cihaz koşusu yapılmadı |
 | `52ad9da29cd7`, `16fa069d6850`, `5a2c7dfb24a2` | Odak Mini, Odak Sayacı, Mini Kanban | eski | Cihaz kapısından önceki koşular; referans değeri sınırlı |
 
@@ -163,9 +164,9 @@ Bu oturumda gerçekten zaman kaybettiren şeyler:
 2. **Teşhis için `agent_runs.context_manifest` sütununa bakın.** Bir agent'a hangi
    belgelerin gerçekten gittiğini gösterir; reviewer'ın cihaz kanıtını görmediğini
    bu sütun kanıtladı.
-3. **`spawnSync` event loop'u bloklar.** Bir agent'ı "paralel" başlatmak, araya
-   bloklayan bir çağrı girerse işe yaramaz. Kalite ve cihaz kapılarının ikisi de
-   artık asenkron `spawn` kullanır.
+3. **Uzun süreçlerde senkron çalıştırıcı kullanmayın.** Codex, Flutter kalite ve
+   cihaz komutları `async-process-runner.mjs` üzerinden asenkron çalışır; timeout
+   bütün süreç ağacını kapatır ve Windows `taskkill` için fallback uygular.
 4. **Üretilen repository'lerde satır sonları karışıktır** (CRLF/LF). Bu dosyalara
    dokunan betikler satır sonundan bağımsız eşleşmelidir.
 5. **`markStaleRunsInterrupted` kapsamı** `IN_FLIGHT_PROJECT_STATUSES` listesidir.
@@ -208,8 +209,9 @@ kaydırma konumu korunur. Olay uç noktası son 400 olayı döndürür.
 2. **Eski örnek projeler yeni sözleşmelerin gerisinde.** `Servis Cep` kritik akış
    sözleşmesinden önce üretildiği için `USER_FLOWS.json` ve `integration_test/`
    içermez; cihaz kapısı `isRepairableDeviceFailure` kuralıyla hemen durur. Elle
-   akış eklemek yerine güncel spec'le yeniden üretmek doğru yol. `Stok Cep` ise
-   yalnız ayakta bir emülatör bekliyor; kod tarafında iş yok.
+   akış eklemek yerine güncel spec'le yeniden üretmek doğru yol. `Stok Cep` eski
+   cihaz koşusunun başarısız kaydıdır; yeniden deneme öncesinde güncel ortam kapısı
+   ve stabil Android build-tools ile değerlendirilmelidir.
 3. **Tekrarlayan reviewer bulgularını mekanik kontrole çevirmek** — bu bir kural,
    açık iş değil. Sessiz `catch` için bir kez yapıldı ve reviewer'ı o konudan
    tamamen çıkardı; aynı bulgu ikinci kez görüldüğünde aynı yol izlenmelidir.
@@ -221,6 +223,7 @@ kaydırma konumu korunur. Olay uç noktası son 400 olayı döndürür.
 | `src/server.mjs` | HTTP API ve panel |
 | `src/orchestrator.mjs` | Pipeline, kapılar, onarım döngüleri, iskelet üretimi |
 | `src/codex-runner.mjs` | Codex süreci, timeout, JSONL olayları |
+| `src/async-process-runner.mjs` | Ortak asenkron süreç, timeout ve process-tree sonlandırma |
 | `src/database.mjs` | SQLite; proje/görev/agent kayıtları ve durum sözleşmeleri |
 | `src/spec-validator.mjs` | Spec doğrulama, kritik akış ve kabul kriteri ayrıştırma |
 | `src/task-plan.mjs` | Plan sözleşmesi ve paralellik kuralları |
@@ -240,6 +243,8 @@ Tümü `.env.example` içinde. Eşzamanlılık üç ayrı sınırla yönetilir:
 süreci — diğer ikisinin çarpımını sınırlayan üst kapı). Tek Codex çağrısının süre
 sınırı `MVP_STUDIO_CODEX_TIMEOUT_MS` (varsayılan 60 dakika), bir çalışmanın token
 sınırı `MVP_STUDIO_PROJECT_TOKEN_BUDGET` (varsayılan 1.500.000, 0 = sınırsız).
+Flutter/Gradle komut sınırı `MVP_STUDIO_FLUTTER_TIMEOUT_MS` ile belirlenir
+(varsayılan 10 dakika).
 
 ## Hızlı komutlar
 

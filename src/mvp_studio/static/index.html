@@ -614,7 +614,7 @@
           <div class="card">
             <h3>Cihaz kapısı <span class="right">${device ? esc(device.status) : '—'}</span></h3>
             ${device ? `<table>${Object.entries(device.checks || {}).map(([name, check]) => checkRow(name, check)).join('')}</table>
-              ${device.reason ? `<div class="card-body dim">${esc(device.reason)}</div>` : ''}`
+              ${device.reason ? `<div class="notice ${device.status === 'WAITING' ? 'warn' : 'err'} section-gap"><strong>Cihaz testi durdu:</strong> ${esc(device.reason)}</div>` : ''}`
               : '<div class="card-body dim">Henüz cihaz koşusu yok.</div>'}
           </div>
         </div>

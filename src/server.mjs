@@ -21,6 +21,7 @@ const orchestrator = new Orchestrator({
   maxParallelBuilders: config.maxParallelBuilders,
   tokenBudget: config.projectTokenBudget,
   deviceMinFreeMb: config.deviceMinFreeMb,
+  flutterTimeoutMs: config.flutterTimeoutMs,
 });
 const indexPath = path.join(config.root, 'src', 'mvp_studio', 'static', 'index.html');
 const specTemplate = fs.readFileSync(path.join(config.root, 'templates', 'PROJECT_SPEC.template.md'), 'utf8');

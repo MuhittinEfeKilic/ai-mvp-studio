@@ -99,6 +99,21 @@ test('the review may only block on the acceptance checklist it answered', () => 
   assert.equal(passing.status, 'PASS');
   assert.equal(passing.criteria.length, 2);
 
+  assert.throws(
+    () => answer('FAIL', [
+      { id: 'AC1', status: 'PASS' }, { id: 'AC2', status: 'PASS' },
+      { id: 'AC999', status: 'FAIL' },
+    ], { issues: ['kapsam dışı bulgu'] }),
+    /bilinmeyen kabul kriterleri.*AC999/,
+  );
+  assert.throws(
+    () => answer('PASS', [
+      { id: 'AC1', status: 'PASS' }, { id: 'AC1', status: 'PASS' },
+      { id: 'AC2', status: 'PASS' },
+    ]),
+    /birden fazla kez.*AC1/,
+  );
+
   // Blocking without failing a criterion is exactly the drift this prevents.
   assert.throws(
     () => answer('FAIL', [

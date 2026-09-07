@@ -1,6 +1,9 @@
 # AI MVP Studio — TODO
 
-Son güncelleme: 29 Ağustos 2026
+Son güncelleme: 7 Eylül 2026
+
+Bu listedeki doğrulanmış açıklar kapatılmıştır. Son tam kontrol: `npm run check`
+başarılı, `npm test` **97/97 PASS**.
 
 Bu liste, güncel mimari ve test incelemesinde doğrulanan işleri içerir. Maddeler
 öncelik sırasındadır. Bir madde tamamlandığında ilgili regresyon testi eklenmeli,
@@ -9,13 +12,13 @@ güncellenmelidir.
 
 ## P0 — Reviewer kabul kriteri sınırını kapat
 
-- [ ] `validateReviewerResult` içinde beklenen listede bulunmayan kriter
+- [x] `validateReviewerResult` içinde beklenen listede bulunmayan kriter
   kimliklerini reddet.
-- [ ] Aynı kriter kimliğinin birden fazla kez bildirilmesini reddet.
-- [ ] Kimlik karşılaştırmasını açık ve deterministik yap (`AC1`, `AC2` vb.).
-- [ ] Bilinmeyen bir kriteri `FAIL` göstererek projenin bloklanamadığını kanıtlayan
+- [x] Aynı kriter kimliğinin birden fazla kez bildirilmesini reddet.
+- [x] Kimlik karşılaştırmasını açık ve deterministik yap (`AC1`, `AC2` vb.).
+- [x] Bilinmeyen bir kriteri `FAIL` göstererek projenin bloklanamadığını kanıtlayan
   regresyon testi ekle.
-- [ ] Bütün beklenen kriterlerin tam olarak bir kez cevaplandığını test et.
+- [x] Bütün beklenen kriterlerin tam olarak bir kez cevaplandığını test et.
 
 ### Neden
 
@@ -33,12 +36,12 @@ kimlik `INVALID_REVIEWER_RESULT` üretmelidir.
 
 ## P0 — Flutter kalite komutlarına güvenli timeout ekle
 
-- [ ] `runFlutterAsync` için yapılandırılabilir süre sınırı ekle.
-- [ ] Timeout sırasında yalnız doğrudan child'ı değil bütün process tree'yi kapat.
-- [ ] Timeout sonucunu stdout, stderr, exit/signal ve açık hata nedeniyle raporla.
-- [ ] `flutter pub get`, `flutter analyze`, `flutter test` ve `flutter build apk`
+- [x] `runFlutterAsync` için yapılandırılabilir süre sınırı ekle.
+- [x] Timeout sırasında yalnız doğrudan child'ı değil bütün process tree'yi kapat.
+- [x] Timeout sonucunu stdout, stderr, exit/signal ve açık hata nedeniyle raporla.
+- [x] `flutter pub get`, `flutter analyze`, `flutter test` ve `flutter build apk`
   çağrılarının aynı güvenli çalıştırıcıyı kullandığını doğrula.
-- [ ] Takılan sahte Flutter komutunun süre sonunda kapanıp pipeline slotunu serbest
+- [x] Takılan sahte Flutter komutunun süre sonunda kapanıp pipeline slotunu serbest
   bıraktığını test et.
 
 ### Neden
@@ -54,13 +57,13 @@ cevap vermeye devam etmelidir.
 
 ## P0 — Windows process-tree sonlandırmasını güvenilir yap
 
-- [ ] `killProcessTree` içinde `taskkill` sonucunu kontrol et.
-- [ ] `taskkill` başarısız olduğunda güvenli `child.kill('SIGKILL')` fallback'i
+- [x] `killProcessTree` içinde `taskkill` sonucunu kontrol et.
+- [x] `taskkill` başarısız olduğunda güvenli `child.kill('SIGKILL')` fallback'i
   çalıştır.
-- [ ] Sonlandırmadan sonra `close` olayının gelmemesi ihtimali için kontrollü settle
+- [x] Sonlandırmadan sonra `close` olayının gelmemesi ihtimali için kontrollü settle
   davranışı ekle.
-- [ ] Windows, izin kısıtlı ortam ve zaten kapanmış süreç senaryolarını test et.
-- [ ] Aynı mekanizmayı Codex, Flutter ve cihaz komutlarında tekrar kullanılabilecek
+- [x] Windows, izin kısıtlı ortam ve zaten kapanmış süreç senaryolarını test et.
+- [x] Aynı mekanizmayı Codex, Flutter ve cihaz komutlarında tekrar kullanılabilecek
   ortak bir async process runner'a dönüştürmeyi değerlendir.
 
 ### Neden
@@ -84,12 +87,12 @@ yetim Node/Codex süreci kalmamalıdır.
 
 ## P1 — Kaynak kontrol komutunun kapsamını genişlet
 
-- [ ] `npm run check` komutunu tüm `src/*.mjs` modüllerini kapsayacak biçimde
+- [x] `npm run check` komutunu tüm `src/*.mjs` modüllerini kapsayacak biçimde
   güncelle.
-- [ ] En az `device-tester.mjs`, `android-environment.mjs`, `quality-report.mjs`,
+- [x] En az `device-tester.mjs`, `android-environment.mjs`, `quality-report.mjs`,
   `source-diagnostics.mjs`, `task-plan.mjs`, `task-scheduler.mjs`,
   `task-worktree.mjs` ve `context-packager.mjs` dosyalarını dahil et.
-- [ ] Komutun Windows PowerShell ve normal npm çalıştırmasında taşınabilir olduğuna
+- [x] Komutun Windows PowerShell ve normal npm çalıştırmasında taşınabilir olduğuna
   dikkat et; shell glob davranışına güvenme.
 
 ### Neden
@@ -110,7 +113,7 @@ kontrolünden geçmelidir.
 - [x] Yetersiz alanı APK kurulumundan önce `environment` arızası olarak raporla.
 - [x] Güvenli ve açıkça sınırlandırılmış bir temizlik önerisi/eylemi tasarla; kullanıcı
   uygulamalarını veya verisini otomatik silme.
-- [ ] Panelde `INSTALL_FAILED_INSUFFICIENT_STORAGE` kök nedenini genel “uygulama
+- [x] Panelde `INSTALL_FAILED_INSUFFICIENT_STORAGE` kök nedenini genel “uygulama
   başlatılamadı” mesajından daha görünür göster.
 
 ### Neden
@@ -127,11 +130,11 @@ durumuna geçilmeli ve raporda gereken/mevcut alan ile kullanıcıya uygulanabil
 
 ## P2 — Güncel olmayan yorum ve dokümantasyonu temizle
 
-- [ ] `src/orchestrator.mjs` içindeki cihaz kapısının hâlâ `spawnSync` tabanlı
+- [x] `src/orchestrator.mjs` içindeki cihaz kapısının hâlâ `spawnSync` tabanlı
   olduğunu söyleyen yorumu güncelle.
-- [ ] `PROJECT_STATUS.md` proje tablosuna güncel `Bakım Takvimi` koşusunu ekle.
-- [ ] `Stok Cep` açıklamasını gerçek veritabanı durumuyla uyumlu hâle getir.
-- [ ] Test toplamını ancak tam `npm test` güncel ortamda başarıyla bittikten sonra
+- [x] `PROJECT_STATUS.md` proje tablosuna güncel `Bakım Takvimi` koşusunu ekle.
+- [x] `Stok Cep` açıklamasını gerçek veritabanı durumuyla uyumlu hâle getir.
+- [x] Test toplamını ancak tam `npm test` güncel ortamda başarıyla bittikten sonra
   belgeye yaz.
 
 ### Neden
@@ -141,12 +144,12 @@ durumu ile handoff belgesindeki proje özeti arasında küçük farklar bulunuyo
 
 ## Değişiklik setini güvenli şekilde teslim et
 
-- [ ] Mevcut 22 değiştirilmiş dosyayı mantıksal paketlere göre gözden geçir.
-- [ ] `git diff --check` çalıştır.
-- [ ] Tam test paketinin bütün testlerle tamamlandığını doğrula.
-- [ ] Çalışan sunucuyu `src/*.mjs` değişikliklerinden sonra yeniden başlat.
-- [ ] Health endpoint, panel ve en az bir gerçek proje durumunu doğrula.
-- [ ] Değişiklikleri açıklayıcı tek veya birkaç stabilizasyon commit'i olarak kaydet.
+- [x] Değişiklik setini mantıksal paketlere göre gözden geçir.
+- [x] `git diff --check` çalıştır.
+- [x] Tam test paketinin bütün testlerle tamamlandığını doğrula.
+- [x] Çalışan sunucuyu `src/*.mjs` değişikliklerinden sonra yeniden başlat.
+- [x] Health endpoint, panel ve en az bir gerçek proje durumunu doğrula.
+- [x] Değişiklikleri açıklayıcı tek veya birkaç stabilizasyon commit'i olarak kaydet.
 
 ## Önerilen uygulama sırası
 

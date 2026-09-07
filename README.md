@@ -207,6 +207,11 @@ gereksiz token tüketimini önlemek için döngü erken durur ve
 `ROOT_CAUSE_REPORT.md` oluşturulur. Özet sonuçlar her zaman `TEST_REPORT.json` ve
 `TEST_REPORT.md` içinde bulunur.
 
+Codex, Flutter ve cihaz komutları ortak asenkron süreç çalıştırıcısını kullanır.
+Timeout bütün süreç ağacını sonlandırır; Windows `taskkill` başarısız olur veya
+yanıt vermezse doğrudan `SIGKILL` fallback'i devreye girer. Flutter komut sınırı
+`MVP_STUDIO_FLUTTER_TIMEOUT_MS` ile yapılandırılır.
+
 ## Gereksinimler
 
 - Node.js 24+
@@ -275,7 +280,7 @@ npm run check
 npm test
 ```
 
-`npm run check` ana JavaScript modüllerinin sözdizimini, `npm test` ise veritabanı,
+`npm run check` bütün `src/*.mjs` modüllerinin sözdizimini, `npm test` ise veritabanı,
 spec doğrulama, plan paralellik kuralları, scheduler, worktree, checkpoint, kalite ve
 inceleme sözleşmeleri, kaynak teşhis taraması, cihaz kapısı, emülatör otomasyonu,
 Codex timeout ve orchestrator davranışlarını denetler. Gerçek Codex kullanan düşük maliyetli kontrol
@@ -301,6 +306,7 @@ yerleşik modüllerini kullanır. Runtime verileri `data/` ve `projects/` altın
 | `src/server.mjs` | Yerel HTTP API ve web paneli |
 | `src/orchestrator.mjs` | Agent pipeline, checkpoint, Flutter kalite kapısı |
 | `src/codex-runner.mjs` | Codex CLI sürecini çalıştırma, timeout ve JSONL olayları |
+| `src/async-process-runner.mjs` | Codex, Flutter ve cihaz komutları için güvenli async süreç ağacı yönetimi |
 | `src/database.mjs` | SQLite proje, görev, bağımlılık ve agent run kayıtları |
 | `src/spec-validator.mjs` | Yüklenen PROJECT_SPEC doğrulaması |
 | `src/task-*.mjs` | Görev planı, scheduler ve worktree/path izolasyonu |
