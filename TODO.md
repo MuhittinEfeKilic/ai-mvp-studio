@@ -10,6 +10,22 @@ Bu liste, güncel mimari ve test incelemesinde doğrulanan işleri içerir. Madd
 `npm run check` ve `npm test` çalıştırılmalı, ardından `PROJECT_STATUS.md`
 güncellenmelidir.
 
+## P1 — İlk builder dalgasında gerçek paralelliği zorunlu kıl
+
+- [ ] Advanced task planında yalnız toplam grafik genişliğini değil, bağımlılığı
+  olmayan başlangıç görevlerinin sayısını da `target_parallelism` ile doğrula.
+- [ ] Coordinator prompt'unda ortak domain sözleşmelerini tek bir seri foundation
+  görevine yığmak yerine feature sahiplerine veya orchestrator iskeletine dağıt.
+- [ ] Tek root görevinden sonra genişleyen planın reddedildiğini gösteren regresyon
+  testi ekle.
+
+### Bulgu
+
+Gerçek `Akış Cep` koşusundaki ilk advanced plan 6 görev ve grafik genişliği 5 ile
+validator'dan geçti; ancak beş feature görevinin tamamı `shared-foundation` görevine
+bağlı olduğu için ilk builder dalgası yalnız x1 çalıştı. Plan sonradan paralelleşse
+de ortak temel iş kritik yola seri gecikme ekliyor.
+
 ## P1 — Kompleks ürün template'i ve ölçeklenen paralel planlama
 
 - [x] Mobil template'i modül sınırları, iş kuralları, ekran durum matrisi, veri
