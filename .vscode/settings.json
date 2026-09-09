@@ -1,0 +1,39 @@
+{
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.scrollback": 2000,
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/.git": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.git": true,
+    "**/build": true,
+    "**/dist": true,
+    "**/coverage": true,
+    "**/.dart_tool": true,
+    "**/.gradle": true,
+    "projects/**": true,
+    "data/**": true,
+    "work/**": true,
+    ".tool_state/**": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/build/**": true,
+    "**/dist/**": true,
+    "**/coverage/**": true,
+    "**/.dart_tool/**": true,
+    "**/.gradle/**": true,
+    "projects/**": true,
+    "data/**": true,
+    "work/**": true,
+    ".tool_state/**": true
+  }
+}

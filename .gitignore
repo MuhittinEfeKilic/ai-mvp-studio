@@ -4,3 +4,9 @@ projects/
 node_modules/
 work/
 .tool_state/
+.serena/
+dist/
+build/
+coverage/
+.dart_tool/
+.gradle/

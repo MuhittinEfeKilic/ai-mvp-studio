@@ -413,7 +413,7 @@ sistemdeki Codex süreci sayısı (`MVP_STUDIO_MAX_CONCURRENT_AGENTS`). Sonuncus
 ikisinin çarpımını sınırlayan üst kapıdır. Varsayılanlar proje başına 4 builder ve
 sistem genelinde 5 Codex sürecidir.
 
-Panel sekmeli ve proje odaklıdır: **Genel · Agentlar · Pipeline · Etkinlik**. Yoklama,
+Panel sekmeli ve proje odaklıdır: **Genel · Çalışma · Doğrulama · Etkinlik**. Yoklama,
 görünen veri değişmedikçe yeniden çizim yapmaz; açık panel, taslak metin ve kaydırma
 konumu korunur.
 
@@ -525,3 +525,18 @@ dosyalarını tamamen oku. Mevcut kullanıcı değişikliklerini koru; data/, pr
 ve worktree'leri silme. Git durumunu ve testleri incele, sonra mevcut hedefi özetle.
 Değişiklik yapacaksan ilgili testleri çalıştır ve PROJECT_STATUS.md dosyasını güncelle.
 ```
+
+
+### Proje sekmeleri ve bilgi hiyerarşisi
+
+**Genel · Çalışma · Doğrulama · Etkinlik**. Genel durum, önerilen eylem ve dört
+proje ölçümünü özetler; kanıt bağlantısı Doğrulama sekmesine açılır. Çalışma,
+eski Agentlar içeriğini ve Pipeline görev ayrıntıları/yeniden deneme eylemlerini
+korur. Doğrulama sırası: özet, kalite, cihaz ürün kontrolleri, kabul kriterleri,
+release hazırlığı ve ortam/temizlik. Kanıtlar, komut çıktıları, senaryolar,
+SHA-256, imza ve manifest bilgileri açılır bölümlerde bulunur.
+
+Kayıtlı cihaz kapısı durumu değiştirilmez; ürün kontrolleri ile temizlik ayrı
+gösterilir. READY yalnız sideload testi anlamındadır. Kriter metni API'de
+yoksa yalnız kimlik/durum gösterilir; kanıt açılarak okunur. Çalışma içeriğinin
+yeniden tasarımı sonraki adıma bırakılmıştır. API ve proje durumları değişmedi.

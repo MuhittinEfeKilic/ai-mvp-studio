@@ -292,15 +292,14 @@ harcadı. `0` sınırı kapatır.
 
 ## Panel
 
-Sekmeli, proje odaklı: **Genel · Agentlar · Pipeline · Etkinlik**.
+Sekmeli, proje odaklı: **Genel · Çalışma · Doğrulama · Etkinlik**.
 
-- **Agentlar** — çalışan agent'lar için rol, görev, geçen süre, son çalıştırılan
-  komut, dokunulan dosya sayısı; üstte toplam/meşgul süre ve örtüşme oranı, token
-  bütçesi çubuğu, altında rol bazında süre ve token tablosu.
-- **Etkinlik** — Codex olay akışı komut/dosya/mesaj/kapı/stderr filtreleriyle.
-- **Genel** — kalite ve cihaz kapıları çek çek, cihaz temizliği ayrı bir tabloda
-  ve başarısızsa uyarı bloğunda, kabul kriteri sonuçları, engelleyici olmayan
-  notlar, onay ve geri bildirim eylemleri.
+- **Çalışma** — mevcut agent görünümü, token/rol tabloları ve eski Pipeline
+  görev ayrıntıları ile yeniden deneme eylemleri.
+- **Genel** — durum, önerilen eylem, pipeline özeti ve dört proje ölçümü.
+- **Doğrulama** — kalite, cihaz, kriterler, release ve ayrı ortam/temizlik
+  bölümleri; kanıtlar ve ham raporlar açılır ayrıntılarda.
+- **Etkinlik** — mevcut filtreli olay akışı.
 
 Yoklama, görünen veri değişmedikçe yeniden çizim yapmaz; açık panel, taslak metin ve
 kaydırma konumu korunur. Olay uç noktası son 400 olayı döndürür.
@@ -339,8 +338,8 @@ bugün iyileştirmiyor. Kayda geçiyorlar ki tekrar keşfedilmesinler.
   `integration`/`reviewer` için kullanılan `#taskCompleted` kontrolü planlama
   aşamasında yok; worktree kirliyse tamamlanmış bir agent yeniden koşabilir.
   Pratikte `#commitArtifact` worktree'yi temiz bıraktığı için tetiklenmedi.
-- **Panel kabul kriteri metnini göstermiyor.** `criterionText()` reviewer
-  verdict'inde `text` alanı arıyor; sözleşmenin şekli `{id, status, evidence}` ve
+- **Kabul kriteri metni API’de eksik.** Doğrulama görünümü reviewer
+  verdict'indeki `text` alanını kullanır; sözleşmenin şekli `{id, status, evidence}` ve
   `ACCEPTANCE_CRITERIA.json` API'de hiç servis edilmiyor, bu yüzden kriter satırında
   yalnız kimlik görünüyor. Kanıt metni ayrıca gösteriliyor, bilgi kaybı sınırlı.
 - **`server.mjs` sözleşme hatalarına 500 dönüyor.** "Bu proje X durumundayken devam
@@ -431,3 +430,18 @@ npm test
 
 Sunucuyu durdurmak için çalışan terminalde `Ctrl+C` kullanın. `src/*.mjs`
 değiştikten sonra sunucuyu **yeniden başlatın**.
+
+
+### Proje sekmeleri ve bilgi hiyerarşisi
+
+**Genel · Çalışma · Doğrulama · Etkinlik**. Genel durum, önerilen eylem ve dört
+proje ölçümünü özetler; kanıt bağlantısı Doğrulama sekmesine açılır. Çalışma,
+eski Agentlar içeriğini ve Pipeline görev ayrıntıları/yeniden deneme eylemlerini
+korur. Doğrulama sırası: özet, kalite, cihaz ürün kontrolleri, kabul kriterleri,
+release hazırlığı ve ortam/temizlik. Kanıtlar, komut çıktıları, senaryolar,
+SHA-256, imza ve manifest bilgileri açılır bölümlerde bulunur.
+
+Kayıtlı cihaz kapısı durumu değiştirilmez; ürün kontrolleri ile temizlik ayrı
+gösterilir. READY yalnız sideload testi anlamındadır. Kriter metni API'de
+yoksa yalnız kimlik/durum gösterilir; kanıt açılarak okunur. Çalışma içeriğinin
+yeniden tasarımı sonraki adıma bırakılmıştır. API ve proje durumları değişmedi.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Efficient Task"
+  short_description: "Perform focused, low-context repository tasks."
+  default_prompt: "Use $efficient-task to complete this repository task with the smallest safe scope."

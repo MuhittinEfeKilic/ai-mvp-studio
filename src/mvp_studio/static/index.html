@@ -156,14 +156,42 @@
     .crit-row .ev { margin-top: 4px; color: var(--dim); font: 11.5px var(--mono); overflow-wrap: anywhere; }
 
     .log { margin: 0; font: 11.5px/1.6 var(--mono); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
-    .events { display: grid; gap: 1px; background: var(--line-soft); }
-    .ev-row { display: grid; grid-template-columns: 66px 128px minmax(0,1fr); gap: 11px; padding: 7px 13px; background: var(--panel); font: 11.5px var(--mono); }
-    .ev-row .t { color: var(--dim); }
-    .ev-row .k { color: var(--accent); overflow: hidden; text-overflow: ellipsis; }
-    .ev-row .d { color: var(--muted); overflow-wrap: anywhere; white-space: pre-wrap; }
-    .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-    .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 11px; font-size: 12px; color: var(--muted); cursor: pointer; }
-    .chip.on { border-color: var(--accent); color: var(--text); }
+    .activity { display:grid; gap:16px; }
+    .activity-summary { display:flex; align-items:center; flex-wrap:wrap; gap:6px 16px; padding-bottom:12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .activity-summary strong { color:var(--text); font-weight:500; }
+    .activity-summary .attention { color:#e3b341; }
+    .activity-filters { display:flex; gap:4px; flex-wrap:wrap; }
+    .activity-filter { border:1px solid transparent; background:transparent; border-radius:5px; padding:3px 8px; font-size:12px; color:var(--muted); cursor:pointer; }
+    .activity-filter:hover { color:var(--text); background:#1C222B; }
+    .activity-filter.on { border-color:var(--line); background:var(--panel); color:var(--text); }
+    .activity-filter small { margin-left:4px; color:var(--dim); font:10px var(--mono); }
+    .activity-events { border-block:1px solid var(--line); }
+    .activity-event { --event-accent:var(--line); position:relative; border-top:1px solid var(--line); }
+    .activity-event:first-child { border-top:0; }
+    .activity-event::before { content:''; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--event-accent); }
+    .activity-event.run, .activity-event.repair { --event-accent:var(--run); }
+    .activity-event.warn { --event-accent:var(--warn); }
+    .activity-event.bad { --event-accent:var(--bad); }
+    .activity-event-main { display:grid; grid-template-columns:72px 10px minmax(0,1fr) auto; gap:10px; align-items:start; padding:8px 12px 8px 14px; }
+    .activity-time { padding-top:2px; color:var(--dim); font:11px var(--mono); font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .activity-dot { width:7px; height:7px; margin-top:6px; border-radius:50%; background:var(--event-accent); }
+    .activity-copy { min-width:0; }
+    .activity-title { font-size:13px; font-weight:500; color:var(--text); overflow-wrap:anywhere; }
+    .activity-summary-text { margin-top:2px; color:var(--muted); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .activity-context { display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:3px; color:var(--dim); font-size:11px; }
+    .activity-context .technical { font-family:var(--mono); }
+    .activity-status { display:inline-flex; align-items:center; gap:6px; margin-top:1px; border:1px solid var(--line); border-radius:4px; padding:1px 6px; color:var(--muted); font-size:10px; white-space:nowrap; }
+    .activity-status::before { content:''; width:5px; height:5px; border-radius:50%; background:var(--event-accent); }
+    .activity-details { margin-left:106px; border-top:1px solid var(--line-soft); }
+    .activity-details > summary { width:max-content; cursor:pointer; list-style:none; padding:5px 8px 6px 0; color:var(--dim); font-size:11px; }
+    .activity-details > summary::-webkit-details-marker { display:none; }
+    .activity-details > summary::after { content:' ▸'; }
+    .activity-details[open] > summary::after { content:' ▾'; }
+    .activity-details > summary:hover { color:var(--text); }
+    .activity-detail { padding:4px 12px 12px 0; overflow:hidden; }
+    .activity-detail .kv { margin-bottom:10px; }
+    .activity-raw { max-height:320px; overflow:auto; padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:#0c0f13; color:var(--muted); font:11px/1.55 var(--mono); white-space:pre; overflow-wrap:normal; }
+    .activity-empty { margin:0; padding:4px 0; color:var(--muted); font-size:13px; }
 
     .notice { border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: 7px; background: var(--panel); padding: 14px; }
     .notice h3 { margin: 0 0 5px; font-size: 14px; font-weight: 600; }
@@ -195,6 +223,153 @@
       .rail { display: none; }
       .cols-4 { grid-template-columns: repeat(2, 1fr); }
       .cols-2 { grid-template-columns: 1fr; }
+    }
+
+    /* Shared rail for the approved project-detail screens. */
+    .main.project-layout-screen {
+      --project-rail-width: 1120px;
+      --project-wide-width: 1440px;
+      --project-gutter: 22px;
+      --project-section-gap: 20px;
+      --project-scrollbar-width: 10px;
+      --bg:#0D0F12; --panel:#12161C; --panel-2:#171C23; --line:#272E38; --line-soft:#272E38;
+      --text:#F3F4F6; --muted:#A7AFBA; --dim:#737D89;
+      background:var(--bg); color:var(--text);
+    }
+    .project-layout-screen .head, .project-layout-screen .tabs {
+      width:100%;
+      max-width:calc(var(--project-rail-width) + var(--project-gutter) + var(--project-gutter) + var(--project-scrollbar-width));
+      margin-inline:auto;
+      padding-right:calc(var(--project-gutter) + var(--project-scrollbar-width));
+    }
+    .project-layout-screen .body { scrollbar-gutter:stable; scrollbar-width:thin; }
+    .project-layout-screen .body::-webkit-scrollbar { width:var(--project-scrollbar-width); }
+    .project-layout-screen .head-top > :first-child { flex:1; overflow:hidden; }
+    .project-layout-screen h1 { font-size:22px; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .project-layout-screen .path { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:4px; }
+    .project-layout-screen .head-actions { align-items:center; flex-wrap:wrap; justify-content:flex-end; max-width:45%; }
+    .project-layout-screen .btn.primary { background:var(--text); border-color:var(--text); color:var(--bg); }
+    .project-layout-screen .btn:hover:not(:disabled) { background:#1C222B; border-color:#343D49; }
+    .project-layout-screen .btn.primary:hover:not(:disabled) { background:var(--muted); border-color:var(--muted); color:var(--bg); }
+    .project-layout-screen :is(button, a, summary, textarea, [tabindex]):focus-visible { outline:2px solid var(--run); outline-offset:3px; }
+    .project-layout-screen .dot { animation:none; }
+    .project-rail { width:100%; max-width:var(--project-rail-width); margin-inline:auto; }
+    .project-rail--wide { max-width:var(--project-wide-width); }
+    .overview, .validation, .execution { display:grid; gap:var(--project-section-gap); }
+    .overview h2 { font-size:14px; font-weight:600; margin:0 0 12px; }
+    .overview-state { border-left:2px solid var(--line); padding:4px 0 4px 16px; overflow-wrap:anywhere; }
+    .overview-state.warn { border-color:var(--warn); }
+    .overview-state.bad { border-color:var(--bad); }
+    .overview-state h2 { margin-bottom:4px; }
+    .overview-state p { margin:4px 0; color:var(--muted); font-size:13px; }
+    .overview-surface { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:16px; }
+    .overview-pipeline { margin:0; }
+    .overview-pipeline > div { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:8px 0; border-top:1px solid var(--line); }
+    .overview-pipeline > div:first-child { border:0; padding-top:0; }
+    .overview-pipeline dd { margin:0; display:flex; align-items:center; gap:8px; text-align:right; }
+    .overview-badge { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:4px; padding:2px 8px; font-size:12px; white-space:nowrap; }
+    .project-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); padding:12px 0; border-block:1px solid var(--line); }
+    .project-metrics > div { padding:0 16px; border-left:1px solid var(--line); }
+    .project-metrics > div:first-child { border-left:0; padding-left:0; }
+    .project-metrics b { display:block; font-size:19px; font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    .project-metrics :is(span,small) { display:block; margin-top:2px; color:var(--muted); font-size:12px; }
+    .overview details > summary { cursor:pointer; color:var(--muted); padding:12px 0; font-size:13px; }
+    .overview details[open] > summary { color:var(--text); }
+    .overview-details { border-top:1px solid var(--line); overflow-wrap:anywhere; }
+    .overview-details .cols-2 { grid-template-columns:1fr; }
+    .overview-details .card { border:0; border-radius:0; background:transparent; }
+    .overview-details .card > h3 { background:transparent; text-transform:none; letter-spacing:0; }
+    .overview-details .notice { background:transparent; }
+    .overview-feedback textarea { background:var(--panel); margin-bottom:8px; }
+    @media (max-width:700px) {
+      .main.project-layout-screen { --project-gutter:16px; --project-section-gap:16px; }
+      .project-layout-screen :is(.head, .tabs, .body) { padding-left:var(--project-gutter); }
+      .project-layout-screen .body { padding-right:var(--project-gutter); }
+      .project-layout-screen :is(.head, .tabs) { padding-right:calc(var(--project-gutter) + var(--project-scrollbar-width)); }
+      .project-layout-screen .head-top { flex-direction:column; gap:12px; }
+      .project-layout-screen .head-top > :first-child { width:100%; }
+      .project-layout-screen .head-actions { margin-left:0; max-width:100%; justify-content:flex-start; }
+      .project-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); row-gap:16px; }
+      .project-metrics > div:nth-child(3) { border-left:0; padding-left:0; }
+      .overview-pipeline dd { flex-wrap:wrap; justify-content:flex-end; }
+    }
+
+    /* Validation keeps its approved content treatment on the shared rail. */
+    .validation h2 { display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:14px; margin:0 0 12px; font-weight:600; }
+    .validation h2 > .overview-badge { margin-left:auto; font-weight:400; }
+    .validation h3 { font-size:13px; margin:0 0 8px; }
+    .validation p { font-size:13px; margin:8px 0 12px; }
+    .validation-intro { margin-top:0 !important; }
+    .validation-section { border-top:1px solid var(--line); padding-top:16px; }
+    .validation-rows { border:1px solid var(--line); border-radius:8px; background:var(--panel); overflow:hidden; }
+    .validation-disclosure { border-top:1px solid var(--line); }
+    .validation-disclosure:first-child { border-top:0; }
+    .validation-disclosure > summary { cursor:pointer; display:flex; align-items:center; gap:12px; padding:8px 12px; font-size:13px; color:var(--muted); list-style:none; }
+    .validation-disclosure > summary::-webkit-details-marker { display:none; }
+    .validation-disclosure > summary::before { content:'▸'; flex:none; color:var(--dim); }
+    .validation-disclosure[open] > summary::before { content:'▾'; }
+    .validation-disclosure > summary:hover { background:#1C222B; color:var(--text); }
+    .validation-row-label { flex:1; }
+    .validation-criterion-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .validation-detail { padding:12px 16px; border-top:1px solid var(--line); overflow-wrap:anywhere; }
+    .validation-detail .log { max-height:360px; overflow:auto; }
+    .validation-release-meta { margin:16px 0; row-gap:8px; }
+    .validation-note { border-left:2px solid var(--line); padding-left:12px; }
+    .validation-note.warn { border-color:var(--warn); }
+    .validation-note.bad { border-color:var(--bad); }
+    .validation-housekeeping h2 { color:var(--muted); }
+    @media (max-width:700px) {
+      .validation-disclosure > summary { gap:8px; }
+    }
+
+    /* Execution content chooses the normal or wide shared rail section by section. */
+    .execution-assignment > :is(strong,span) { display:-webkit-box !important; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .execution h2 { display:flex; gap:12px; align-items:baseline; margin:0 0 12px; font-size:14px; font-weight:600; }
+    .execution h2 .muted { font-size:12px; font-weight:400; }
+    .execution-secondary b { font-size:18px; }
+    .execution-idle, .execution-caption { font-size:12px; color:var(--muted); margin:8px 0; }
+    .execution-idle { color:var(--text); }
+    .execution :is(.execution-details,.execution-task) { border:0; border-top:1px solid var(--line); border-radius:0; background:transparent; }
+    .execution :is(.execution-details,.execution-task) > summary { display:flex; align-items:center; gap:12px; cursor:pointer; padding:8px 12px; font-size:13px; list-style:none; }
+    .execution summary::-webkit-details-marker { display:none; }
+    .execution summary::before { content:'▸'; color:var(--dim); flex:none; }
+    .execution details[open] > summary::before { content:'▾'; }
+    .execution summary:hover { background:#1C222B; }
+    .execution-assignment { flex:1; min-width:0; }
+    .execution-assignment strong { display:block; font-size:13px; font-weight:500; overflow-wrap:anywhere; }
+    .execution-assignment > span { display:block; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+    .execution-active { border-left:2px solid var(--run); background:var(--panel); }
+    .execution-detail { padding:12px 16px; border-top:1px solid var(--line); overflow-wrap:anywhere; }
+    .execution-detail .log { max-height:320px; overflow:auto; margin-top:12px; }
+    .execution-tasks { border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    .execution-task:first-child { border-top:0; }
+    .execution-task.run { border-left:2px solid var(--run); background:var(--panel); }
+    .execution-task.bad { border-left:2px solid var(--bad); }
+    .execution-task.ok .execution-assignment strong { color:var(--muted); }
+    .execution-task-time { font-size:12px; color:var(--muted); white-space:nowrap; }
+    .execution-table { overflow:auto; }
+    .execution-table table { min-width:640px; }
+    .execution-timeline { max-height:320px; overflow:auto; border-block:1px solid var(--line); }
+    .execution-timeline-row { display:grid; grid-template-columns:180px minmax(200px,1fr) 80px; gap:12px; align-items:center; min-width:520px; padding:4px 0; font-size:11px; }
+    .execution-timeline-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); }
+    .execution-track { height:16px; position:relative; background:var(--panel); overflow:hidden; }
+    .execution-track i { position:absolute; height:6px; top:5px; min-width:1px; background:#737D89; }
+    .execution-track i.run { background:var(--run); }
+    .execution-track i.bad { background:var(--bad); }
+    .execution-budget-line { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; font-size:12px; color:var(--muted); margin-bottom:8px; }
+    .execution-budget-line strong { font-size:18px; color:var(--text); }
+    .execution-budget-limit { margin-left:auto; }
+    .execution .budget { height:4px; }
+    .execution .budget i { background:var(--muted); }
+    @media (max-width:700px) {
+      .execution summary { flex-wrap:wrap; }
+      .execution-assignment { flex-basis:55%; }
+      .execution-task-time { display:none; }
+      .activity-event-main { grid-template-columns:58px 8px minmax(0,1fr); gap:8px; padding-inline:10px; }
+      .activity-status { grid-column:3; width:max-content; }
+      .activity-details { margin-left:84px; }
+      .activity-detail .kv { grid-template-columns:1fr; gap:3px; }
+      .activity-detail .kv dd { margin-bottom:6px; }
     }
   </style>
 </head>
@@ -414,6 +589,136 @@
       return body === '{}' ? '' : body.slice(0, 240);
     }
 
+    const ACTIVITY_VALIDATION_EVENTS = new Set([
+      'preflight.completed', 'device_test.completed', 'reviewer.contract_rejected',
+      'release_readiness.started', 'release_readiness.completed', 'release_readiness.failed',
+    ]);
+    const ACTIVITY_SYSTEM_EVENTS = new Set([
+      'scaffold.created', 'warm_build.completed', 'dependencies.installed', 'task_plan.rejected',
+    ]);
+
+    function activityCategory(event) {
+      if (event.payload && event.payload.agent) return 'agents';
+      if (ACTIVITY_VALIDATION_EVENTS.has(event.event_type)) return 'validation';
+      if (ACTIVITY_SYSTEM_EVENTS.has(event.event_type)) return 'system';
+      return null;
+    }
+
+    function activitySeverity(event) {
+      const payload = event.payload || {};
+      const item = payload.item || {};
+      const status = String(payload.status || item.status || '').toUpperCase();
+      const type = String(event.event_type || '').toLowerCase();
+      const role = String(payload.role || '').toLowerCase();
+      const failedCommand = item.type === 'command_execution'
+        && item.exit_code !== undefined && item.exit_code !== null && Number(item.exit_code) !== 0;
+      if (failedCommand || ['FAIL', 'FAILED', 'BLOCKED'].includes(status)
+        || ['error', 'turn.failed', 'timeout', 'release_readiness.failed'].includes(type)) {
+        return { tone:'bad', label:status === 'BLOCKED' ? 'Engellendi' : 'Başarısız', attention:true };
+      }
+      if (type === 'stderr' || type === 'unparsed_output' || type.endsWith('.rejected')
+        || ['WAITING', 'WARNING', 'WARN'].includes(status)) {
+        return { tone:'warn', label:status === 'WAITING' ? 'Bekliyor' : 'Dikkat', attention:true };
+      }
+      if (role.includes('repair') || type.includes('repair') || type.includes('retry')) {
+        return { tone:'repair', label:'Onarım', attention:false };
+      }
+      if (type.endsWith('.started') || type === 'item.started' || status === 'RUNNING') {
+        return { tone:'run', label:'Çalışıyor', attention:false };
+      }
+      if (['PASS', 'READY', 'COMPLETED', 'SUCCESS'].includes(status) || type.endsWith('.completed')) {
+        return { tone:'neutral', label:status || 'Tamamlandı', attention:false };
+      }
+      if (status === 'SKIPPED') return { tone:'neutral', label:'Atlandı', attention:false };
+      return { tone:'neutral', label:'Bilgi', attention:false };
+    }
+
+    function activityTitle(event) {
+      const item = (event.payload || {}).item || {};
+      if (event.event_type === 'item.started') {
+        if (item.type === 'command_execution') return 'Komut başlatıldı';
+        if (item.type === 'file_change') return 'Dosya değişikliği başladı';
+      }
+      if (event.event_type === 'item.completed') {
+        if (item.type === 'command_execution') return 'Komut tamamlandı';
+        if (item.type === 'file_change') return 'Dosyalar değiştirildi';
+        if (item.type === 'agent_message') return 'Agent mesajı';
+      }
+      if (event.event_type === 'item.updated' && item.type === 'todo_list') return 'Görev listesi güncellendi';
+      return ({
+        'context.packaged':'Bağlam paketi hazırlandı',
+        'dependencies.installed':'Bağımlılıklar kuruldu',
+        'device_test.completed':'Cihaz doğrulaması tamamlandı',
+        'error':'Agent hatası',
+        'preflight.completed':'Ortam ön kontrolü tamamlandı',
+        'release_readiness.started':'Release hazırlık kontrolü başladı',
+        'release_readiness.completed':'Release hazırlık kontrolü tamamlandı',
+        'release_readiness.failed':'Release hazırlık kontrolü başarısız',
+        'reviewer.contract_rejected':'Reviewer sözleşmesi reddedildi',
+        'scaffold.created':'Flutter iskeleti oluşturuldu',
+        'stderr':'Standart hata çıktısı',
+        'task_plan.rejected':'Görev planı reddedildi',
+        'thread.started':'Agent oturumu başladı',
+        'timeout':'Agent zaman aşımına uğradı',
+        'turn.completed':'Agent çalışması tamamlandı',
+        'turn.failed':'Agent çalışması başarısız',
+        'turn.started':'Agent çalışması başladı',
+        'unparsed_output':'Ayrıştırılamayan agent çıktısı',
+        'warm_build.completed':'Ön derleme tamamlandı',
+      })[event.event_type] || event.event_type;
+    }
+
+    function activitySummary(event) {
+      const payload = event.payload || {};
+      const item = payload.item || {};
+      if (item.type || ['stderr', 'unparsed_output'].includes(event.event_type)) return eventSummary(event);
+      if (event.event_type === 'context.packaged') return payload.chars ? `${num(payload.chars)} karakter bağlam` : '';
+      if (event.event_type === 'dependencies.installed') return (payload.packages || []).join(', ');
+      if (event.event_type === 'device_test.completed') return payload.reason || payload.failure_kind || '';
+      if (event.event_type === 'error') return payload.message || '';
+      if (event.event_type === 'preflight.completed') {
+        return [payload.flutter, payload.android_sdk, payload.build_tools]
+          .filter(check => check && check.status && check.status !== 'PASS')
+          .map(check => check.details || check.status).filter(Boolean).join(' · ');
+      }
+      if (event.event_type === 'release_readiness.completed') {
+        return `${num(payload.blockers || 0)} engel · ${num(payload.warnings || 0)} uyarı`;
+      }
+      if (event.event_type === 'reviewer.contract_rejected' || event.event_type === 'task_plan.rejected'
+        || event.event_type === 'release_readiness.failed') return payload.error || '';
+      if (event.event_type === 'scaffold.created') return [payload.project_name, payload.org].filter(Boolean).join(' · ');
+      if (event.event_type === 'turn.completed' && payload.usage) {
+        return `${num(payload.usage.input_tokens || 0)} giriş · ${num(payload.usage.output_tokens || 0)} çıkış tokenı`;
+      }
+      if (event.event_type === 'turn.failed') return payload.error?.message || payload.error || '';
+      if (event.event_type === 'warm_build.completed' && payload.seconds !== undefined) return `${num(payload.seconds)} sn`;
+      return payload.message || payload.text || '';
+    }
+
+    function activityContext(event) {
+      const payload = event.payload || {};
+      const item = payload.item || {};
+      const parts = [];
+      if (payload.agent) parts.push(`<span title="${esc(payload.agent).replaceAll('"', '&quot;')}">${esc(payload.agent)}</span>`);
+      if (payload.role) parts.push(`<span>${esc(roleLabel(payload.role))}</span>`);
+      if (item.type) parts.push(`<span class="technical">${esc(item.type)}</span>`);
+      if (payload.attempt !== undefined) parts.push(`<span>${num(payload.attempt)}. deneme</span>`);
+      return parts.join('');
+    }
+
+    function activityDetails(event) {
+      const payload = event.payload || {};
+      const item = payload.item || {};
+      const values = [
+        ['Olay türü', event.event_type], ['Kesin zaman', event.created_at],
+        ['Agent', payload.agent], ['Rol', payload.role ? roleLabel(payload.role) : null],
+        ['Öğe kimliği', item.id], ['Durum', payload.status || item.status],
+        ['Tanı kodu', payload.failure_kind || payload.code],
+      ].filter(([, value]) => value !== undefined && value !== null && value !== '');
+      return `<dl class="kv">${values.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>
+        <pre class="activity-raw" tabindex="0">${esc(JSON.stringify(event, null, 2))}</pre>`;
+    }
+
     /* ---------- rendering ---------- */
 
     async function refreshHealth() {
@@ -477,6 +782,7 @@
 
     // UI state lives here rather than being scraped from the DOM, so it survives
     // both background polling and tab switches.
+    const openOverview = new Set();
     const openTasks = new Set();
     const autoOpened = new Set();
     const scrollByTab = {};
@@ -495,6 +801,11 @@
       if (input) {
         input.value = feedbackDraft;
         input.oninput = () => { feedbackDraft = input.value; };
+      }
+      for (const node of document.querySelectorAll('[data-overview]')) {
+        const key = selectedId + ':' + node.dataset.overview;
+        node.open = openOverview.has(key);
+        node.ontoggle = () => node.open ? openOverview.add(key) : openOverview.delete(key);
       }
       for (const node of document.querySelectorAll('.stage')) {
         node.open = openTasks.has(node.dataset.task);
@@ -534,21 +845,26 @@
 
       const tabs = [
         ['overview', 'Genel', ''],
-        ['agents', 'Agentlar', active.length ? String(active.length) : ''],
-        ['pipeline', 'Pipeline', `${tasks.filter(t => t.status === 'completed').length}/${tasks.length}`],
+        ['execution', 'Çalışma', active.length ? String(active.length) : ''],
+        ['validation', 'Doğrulama', ''],
         ['activity', 'Etkinlik', String(events.length)],
       ];
 
+      el('main').classList.toggle('project-layout-screen', ['overview', 'execution', 'validation', 'activity'].includes(activeTab));
+      el('main').classList.toggle('execution-screen', activeTab === 'execution');
+      el('main').classList.toggle('overview-screen', ['overview', 'validation'].includes(activeTab));
       el('main').innerHTML = `
         <div class="head">
           <div class="head-top">
             <div>
-              <h1>${esc(project.name)}</h1>
-              <div class="state"><i class="dot ${tone(project.status)}"></i>${esc(label(project.status))}</div>
-              <div class="path">${esc(project.workspace_path)}</div>
+              <h1 title="${esc(project.name).replaceAll('"', '&quot;')}">${esc(project.name)}</h1>
+              <div class="state"><i class="dot ${['overview', 'validation'].includes(activeTab) ? overviewTone(project.status) : tone(project.status)}"></i>${esc(label(project.status))}</div>
+              <div class="path" title="${esc(project.workspace_path).replaceAll('"', '&quot;')}">${['overview', 'validation'].includes(activeTab) ? `${esc(project.id.slice(0, 12))} · ` : ''}${esc(project.workspace_path)}</div>
             </div>
             <div class="head-actions">
               ${project.artifact_path ? `<a class="btn" href="/api/projects/${project.id}/artifact">APK indir</a>` : ''}
+              ${['overview', 'validation'].includes(activeTab) && project.status === 'awaiting_user_review' ? '<button class="btn primary" data-act="accept">Ürünü kabul et</button>' : ''}
+              ${['overview', 'validation'].includes(activeTab) && project.status === 'accepted' ? `<button class="btn primary" data-act="release" ${project.release_evaluating ? 'disabled' : ''}>${project.release_evaluating ? 'Release değerlendiriliyor…' : 'Release hazırlığını değerlendir'}</button>` : ''}
               ${canResume ? `<button class="btn primary" data-act="resume">${project.status === 'awaiting_device_test' ? 'Cihaz testini yeniden dene' : 'Checkpoint’ten devam et'}</button>` : ''}
             </div>
           </div>
@@ -563,281 +879,359 @@
 
       const body = el('tab-body');
       if (activeTab === 'overview') body.innerHTML = renderOverview(project, tasks, runs, awaits);
-      else if (activeTab === 'agents') body.innerHTML = renderAgents(runs, tasks, events, active);
-      else if (activeTab === 'pipeline') body.innerHTML = renderPipeline(tasks);
-      else body.innerHTML = renderActivity(events);
+      else if (activeTab === 'execution') body.innerHTML = renderExecution(project, tasks, runs, events, active);
+      else if (activeTab === 'validation') body.innerHTML = renderValidation(project, runs);
+      else body.innerHTML = renderActivity(events, project, active);
 
       wire();
       restoreUiState();
     }
 
+    function overviewTone(status) {
+      if (['PASS', 'READY', 'ACCEPTED', 'completed', 'accepted'].includes(status)) return 'ok';
+      if (['WAITING', 'WARNING', 'WARN', 'pending', 'paused_context', 'paused_usage', 'awaiting_user_review'].includes(status)) return 'warn';
+      if (['FAIL', 'FAILED', 'BLOCKED', 'failed'].includes(status)) return 'bad';
+      if (status === 'RUNNING') return 'run';
+      return tone(status);
+    }
+
+    function overviewBadge(status, semanticTone) {
+      return '<span class="overview-badge"><i class="dot ' + (semanticTone || overviewTone(status)) + '"></i>' + esc(({completed:'COMPLETED',running:'RUNNING',pending:'WAITING',failed:'FAILED',FAIL:'FAILED',WARN:'WARNING'})[status] || status) + '</span>';
+    }
+
     function renderOverview(project, tasks, runs, awaits) {
-      const done = tasks.filter(task => task.status === 'completed').length;
-      const fresh = runs.reduce((sum, run) => sum + Math.max(0, (run.input_tokens || 0) - (run.cached_input_tokens || 0)), 0);
-      const out = runs.reduce((sum, run) => sum + Number(run.output_tokens || 0), 0);
-      const quality = project.quality_report ? JSON.parse(project.quality_report) : null;
-      const device = project.device_report ? JSON.parse(project.device_report) : null;
-      const release = project.release_report ? JSON.parse(project.release_report) : null;
+      const quality = validationReport(project.quality_report);
+      const device = validationReport(project.device_report);
+      const release = validationReport(project.release_report);
       const verdict = lastVerdict(runs);
-
-      const checkRow = (name, check) => `
-        <tr><td><span class="state"><i class="dot ${check.status === 'PASS' ? 'ok' : check.status === 'SKIPPED' ? '' : 'bad'}"></i>${esc(name)}</span></td>
-        <td class="code">${esc(check.status)}${check.exit_code === null || check.exit_code === undefined ? '' : ` · exit ${check.exit_code}`}</td></tr>`;
-
-      return `
-        <div class="grid cols-4">
-          <div class="stat"><b>${done}/${tasks.length}</b><span>Görev</span></div>
-          <div class="stat"><b>${duration(project.created_at, RUNNING.includes(project.status) ? null : project.updated_at)}</b><span>Süre</span></div>
-          <div class="stat"><b>${num(fresh)}</b><span>Yeni giriş tokenı</span></div>
-          <div class="stat"><b>${num(out)}</b><span>Çıkış tokenı</span></div>
-        </div>
-
-        ${awaits ? `
-        <div class="notice section-gap">
-          <h3>Ürün incelemesi</h3>
-          <p>Teknik ve cihaz kapıları tamamlandı. Ürünü kabul edebilir veya hedefli bir düzeltme turu başlatabilirsiniz.</p>
-          <div class="row">
-            <button class="btn primary" data-act="accept">Ürünü kabul et</button>
-            <div style="flex:1;min-width:240px">
-              <textarea data-feedback placeholder="Düzeltilmesini istediğiniz noktayı yazın…"></textarea>
-              <button class="btn" style="margin-top:7px" data-act="feedback">Geri bildirim gönder</button>
-            </div>
-          </div>
-        </div>` : ''}
-
-        ${project.error ? `<div class="notice err section-gap"><h3>Hata</h3><pre class="log">${esc(project.error)}</pre></div>` : ''}
-
-        <div class="grid cols-2 section-gap">
-          <div class="card">
-            <h3>Kalite kapısı <span class="right">${quality ? esc(quality.status) : '—'}</span></h3>
-            ${quality ? `<table>${Object.entries(quality.checks).map(([name, check]) => checkRow(name, check)).join('')}</table>`
-              : '<div class="card-body dim">Henüz rapor yok.</div>'}
-          </div>
-          <div class="card">
-            <h3>Cihaz kapısı <span class="right">${device ? esc(device.status) : '—'}</span></h3>
-            ${device ? `${device.target ? `<div class="card-body dim" style="font-size:12px">Hedef:
-                ${esc(device.target.label || device.target.type)}${device.target.model
-                  ? ` · ${esc([device.target.manufacturer, device.target.model].filter(Boolean).join(' '))}` : ''}</div>` : ''}
-              <table>${Object.entries(device.checks || {}).map(([name, check]) => checkRow(name, check)).join('')}</table>
-              ${device.housekeeping ? `<table class="housekeeping">${Object.entries(device.housekeeping)
-                .map(([name, check]) => checkRow(`${name} (temizlik)`, check)).join('')}</table>` : ''}
-              ${(device.notes || []).length ? `<div class="notice warn section-gap"><strong>Test sonrası uyarı:</strong>
-                <pre class="log">${esc(device.notes.join('\n'))}</pre></div>` : ''}
-              ${device.reason ? `<div class="notice ${device.status === 'WAITING' ? 'warn' : 'err'} section-gap"><strong>Cihaz testi durdu:</strong> ${esc(device.reason)}</div>` : ''}`
-              : '<div class="card-body dim">Henüz cihaz koşusu yok.</div>'}
-          </div>
-        </div>
-
-        ${verdict && verdict.criteria && verdict.criteria.length ? `
-        <div class="card section-gap">
-          <h3>Kabul kriterleri <span class="right">${verdict.criteria.filter(c => c.status === 'PASS').length}/${verdict.criteria.length}</span></h3>
-          <div class="crit">
-            ${verdict.criteria.map(item => `
-              <div class="crit-row">
-                <span class="id"><i class="dot ${item.status === 'PASS' ? 'ok' : 'bad'}"></i> ${esc(item.id)}</span>
-                <div><div class="txt">${esc(criterionText(item.id) || item.evidence || '')}</div>
-                ${item.evidence ? `<div class="ev">${esc(item.evidence)}</div>` : ''}</div>
-              </div>`).join('')}
-          </div>
-        </div>` : ''}
-
-        ${verdict && verdict.notes && verdict.notes.length ? `
-        <div class="card section-gap">
-          <h3>İnceleme notları <span class="right">engelleyici değil</span></h3>
-          <div class="card-body"><pre class="log">${esc(verdict.notes.map(note => `• ${note}`).join('\n'))}</pre></div>
-        </div>` : ''}
-
-        ${project.status === 'accepted' || release ? `
-        <div class="card section-gap">
-          <h3>Release hazırlığı <span class="right">${release ? esc(release.status) : '—'}</span></h3>
-          <div class="card-body">
-            ${release ? `
-              <dl class="kv">
-                <dt>Kimlik</dt><dd class="mono">${esc(release.identity.application_id || '—')}</dd>
-                <dt>Ad</dt><dd>${esc(release.identity.display_name || '—')}</dd>
-                <dt>Sürüm</dt><dd class="mono">${esc(release.identity.version_name || '—')}+${esc(String(release.identity.version_code ?? '—'))}</dd>
-                ${release.artifact ? `<dt>Artefakt</dt><dd class="mono">${esc(release.artifact.path)} · ${num(release.artifact.size_bytes)} bayt</dd>
-                <dt>SHA-256</dt><dd class="mono" style="word-break:break-all">${esc(release.artifact.sha256)}</dd>` : ''}
-                <dt>İmza</dt><dd>${esc(release.signing.details)}</dd>
-              </dl>
-              ${release.blockers.length ? `<div class="notice err section-gap"><strong>Engeller:</strong>
-                <pre class="log">${esc(release.blockers.map(item => `• ${item.title}: ${item.details}`).join('\n'))}</pre></div>` : ''}
-              ${release.warnings.length ? `<div class="notice warn section-gap"><strong>Uyarılar (engelleyici değil):</strong>
-                <pre class="log">${esc(release.warnings.map(item => `• ${item.title}: ${item.details}`).join('\n'))}</pre></div>` : ''}
-            ` : '<div class="dim">Henüz değerlendirme yapılmadı.</div>'}
-            ${project.status === 'accepted' ? `<div class="row" style="margin-top:10px">
-              <button class="btn" data-act="release" ${project.release_evaluating ? 'disabled' : ''}>
-                ${project.release_evaluating ? 'Release derlemesi çalışıyor…' : (release ? 'Yeniden değerlendir' : 'Release hazırlığını değerlendir')}
-              </button>
-            </div>` : ''}
-          </div>
-        </div>` : ''}
-
-        ${project.final_message ? `
-        <div class="card section-gap"><h3>Sonuç özeti</h3>
-          <div class="card-body"><pre class="log">${esc(project.final_message)}</pre></div></div>` : ''}`;
+      const criteria = verdict?.criteria || [];
+      const done = tasks.filter(t => t.status === 'completed').length;
+      const billable = runs.reduce((sum, r) => sum + Math.max(0, (r.input_tokens || 0) - (r.cached_input_tokens || 0)) + Number(r.output_tokens || 0), 0);
+      const active = runs.filter(r => r.status === 'running').length;
+      const deviceGroup = deviceGroups(device);
+      const productChecksPassed = deviceGroup.passed;
+      const deviceTone = (deviceGroup.passed && deviceGroup.warning) || device?.failure_kind === 'environment' ? 'warn' : undefined;
+      let heading = label(project.status);
+      let message = RUNNING.includes(project.status) ? 'Üretim devam ediyor. Aşağıdaki kayıtlı sonuçlar son tamamlanan kontrolleri gösterir.' : 'Kayıtlı doğrulama sonuçlarını aşağıdan inceleyebilirsiniz.';
+      if (project.status === 'awaiting_device_test') {
+        heading = 'Cihaz doğrulaması müdahale bekliyor';
+        message = (productChecksPassed ? 'Ürün kontrolleri geçti. ' : quality?.status === 'PASS' ? 'Kalite kapısı geçti. ' : '') + 'Cihaz doğrulamasını yeniden deneyin. Ayrıntılar Doğrulama sekmesinde.';
+      } else if (project.status === 'awaiting_user_review') {
+        message = 'Proje onayınızı bekliyor. Kayıtlı kanıtları inceleyin; ürünü kabul edin veya geri bildirimle düzeltme isteyin.';
+      } else if (project.status === 'accepted') {
+        message = project.release_evaluating ? 'Release değerlendirmesi çalışıyor; proje kabul durumu korunuyor.' : release?.status === 'READY' ? 'Release raporu sideload ile harici test için READY. Mağaza dağıtımı doğrulanmadı.' : release?.status === 'BLOCKED' ? 'Ürün kabul edildi; release hazırlığı BLOCKED. Doğrulama sekmesindeki engelleri inceleyin.' : 'Ürün kabul edildi. Sonraki adım: release hazırlığını değerlendirin.';
+      } else if (RESUMABLE.includes(project.status)) {
+        message = 'Çalışma durdu. Doğrulama sekmesindeki son kaydı inceleyin; hazır olduğunuzda checkpoint’ten devam edin.';
+      }
+      const row = (name, status, note = '', semanticTone) => '<div><dt>' + name + '</dt><dd><span class="muted">' + esc(note) + '</span>' + overviewBadge(status, semanticTone) + '</dd></div>';
+      return '<div class="overview project-rail">' +
+        '<section class="overview-state ' + overviewTone(project.status) + '"><h2>' + esc(heading) + '</h2><p>' + esc(message) + '</p>' +
+        '</section>' +
+        '<section class="overview-surface"><h2>Pipeline özeti</h2><dl class="overview-pipeline">' +
+        row('Görevler', !tasks.length ? 'NOT RUN' : done === tasks.length ? 'completed' : tasks.some(t => t.status === 'running') ? 'running' : tasks.some(t => t.status === 'failed') ? 'failed' : 'pending', done + ' / ' + tasks.length) +
+        row('Kalite', quality?.status || 'NOT RUN') + row('Cihaz', device?.status || 'NOT RUN', '', deviceTone) +
+        row('Kabul kriterleri', verdict?.status || 'NOT RUN', criteria.length ? criteria.filter(c => c.status === 'PASS').length + ' / ' + criteria.length : '') +
+        row('Release', project.release_evaluating ? 'RUNNING' : release?.status || 'NOT RUN', project.status !== 'accepted' && !release ? 'Kabul sonrası kullanılabilir' : '') + '</dl></section>' +
+        '<section class="overview-metrics project-metrics" aria-label="Proje ölçümleri">' +
+        '<div><b>' + done + ' / ' + tasks.length + '</b><span>Tamamlanan görev</span></div>' +
+        '<div><b>' + duration(project.created_at, RUNNING.includes(project.status) ? null : project.updated_at) + '</b><span>Geçen süre</span><small>Beklemeler dahil</small></div>' +
+        '<div><b>' + num(billable) + '</b><span>Faturalanabilir token · toplam</span><small>' + (tokenBudget ? 'Koşu bütçesi: ' + num(tokenBudget) : 'Koşu bütçesi sınırsız') + '</small></div>' +
+        '<div><b>' + runs.length + '</b><span>Agent koşusu</span><small>' + active + ' aktif</small></div></section>' +
+        (awaits ? '<details class="overview-feedback" data-overview="feedback"><summary>Geri bildirim / düzeltme isteği</summary><textarea data-feedback placeholder="Düzeltilmesini istediğiniz noktayı yazın…"></textarea><button class="btn" data-act="feedback">Geri bildirim gönder</button>' + (project.status === 'accepted' ? '<button class="btn" data-act="accept">Kabulü yeniden onayla</button>' : '') + '</details>' : '') +
+        '<div><button class="btn" data-tab="validation">Doğrulama kanıtlarını incele →</button></div>' +
+        '<details class="overview-details" data-overview="technical"><summary>Proje bilgileri</summary>' +
+        '<dl class="kv"><dt>Proje</dt><dd>' + esc(project.id) + '</dd><dt>Workspace</dt><dd>' + esc(project.workspace_path) + '</dd></dl>' +
+        '</details></div>';
     }
 
-    /** Acceptance criteria text lives in the reviewer verdict only by id. */
-    function criterionText(id) {
-      const verdict = lastVerdict(detail.agent_runs || []);
-      const found = (verdict && verdict.criteria || []).find(item => item.id === id);
-      return found && found.text ? found.text : id;
+    /** Presentation only: recorded gate statuses remain authoritative. */
+    function validationReport(raw) {
+      if (!raw) return null;
+      try { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
+      catch { return { status: 'UNKNOWN', unreadable: true, raw }; }
     }
 
-    function renderAgents(runs, tasks, events, active) {
-      const taskFor = run => tasks.find(task => task.status === 'running' && task.role === run.role)
-        || tasks.find(task => run.agent_name.includes(task.name));
+    const HOUSEKEEPING_CHECKS = ['app_cleanup', 'package_uninstall', 'avd_wipe'];
+    function deviceGroups(device) {
+      const checks = Object.entries(device?.checks || {});
+      const product = checks.filter(([key]) => !HOUSEKEEPING_CHECKS.includes(key));
+      const housekeeping = [
+        ...checks.filter(([key]) => HOUSEKEEPING_CHECKS.includes(key)).map(([key, check]) => [key + ' (eski kayıt)', check]),
+        ...Object.entries(device?.housekeeping || {}),
+      ];
+      const passed = ['flow_coverage', 'device_storage', 'integration_test', 'apk_install', 'launch']
+        .every(key => device?.checks?.[key]?.status === 'PASS')
+        && product.every(([, check]) => check?.status === 'PASS');
+      return { product, housekeeping, passed,
+        warning: housekeeping.some(([, check]) => ['FAIL', 'FAILED', 'WARN', 'WARNING'].includes(check?.status)) };
+    }
 
-      const live = active.length ? `
-        <div class="now">
-          ${active.map(run => {
-            const activity = agentActivity(events, run.agent_name);
-            const task = taskFor(run);
-            return `
-            <div class="now-item">
-              <div class="now-head">
-                <i class="dot run"></i><b>${esc(run.agent_name)}</b>
-                <span class="role">${esc(roleLabel(run.role))}</span>
-                <span class="elapsed">${duration(run.started_at)}</span>
-              </div>
-              ${task ? `<div class="now-task">Görev: <b>${esc(task.name)}</b> · yollar <span class="mono">${esc((task.allowed_paths || []).join(', ') || '—')}</span></div>` : ''}
-              ${activity.command ? `<div class="now-cmd">${esc(activity.command)}</div>` : '<div class="now-cmd dim">komut bekleniyor…</div>'}
-              <div class="now-meta">
-                <span>${activity.files} dosya değişikliği</span>
-                <span>${num(run.context_chars)} context karakteri</span>
-                <span>${num(run.output_tokens)} çıkış tokenı</span>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>`
-        : '<div class="card"><div class="card-body dim">Şu anda çalışan agent yok.</div></div>';
+    function validationDisclosure(key, title, body) {
+      return `<details class="validation-disclosure" data-overview="${esc(key).replaceAll('"', '&quot;')}">
+        <summary>${title}</summary><div class="validation-detail">${body}</div></details>`;
+    }
 
-      const history = runs.slice().reverse().map(run => `
-        <tr>
-          <td><span class="state"><i class="dot ${tone(run.status)}"></i>${esc(run.agent_name)}</span>
-            ${run.error ? `<div class="dim mono" style="margin-top:4px;font-size:11px">${esc(String(run.error).slice(0, 160))}</div>` : ''}</td>
-          <td><span class="role">${esc(roleLabel(run.role))}</span></td>
-          <td class="num">${duration(run.started_at, run.completed_at)}</td>
-          <td class="num">${num(Math.max(0, (run.input_tokens || 0) - (run.cached_input_tokens || 0)))}</td>
-          <td class="num">${num(run.output_tokens)}</td>
-          <td class="num dim">${clock(run.started_at)}</td>
-        </tr>`).join('');
+    const validationRaw = value => `<pre class="log">${esc(typeof value === 'string' ? value : JSON.stringify(value, null, 2))}</pre>`;
 
-      const totals = agentTotals(runs);
-      const billable = runs.reduce((sum, run) =>
-        sum + Math.max(0, (run.input_tokens || 0) - (run.cached_input_tokens || 0))
-        + Number(run.output_tokens || 0), 0);
+    function validationChecks(entries, prefix, housekeeping = false) {
+      const names = { analyze:'Analyze', test:'Tests', apk:'APK build', diagnostics:'Diagnostics',
+        flow_coverage:'Flow coverage', device_storage:'Device storage', integration_test:'Integration tests',
+        apk_install:'APK install', launch:'Launch', app_cleanup:'App cleanup', avd_wipe:'AVD wipe' };
+      return entries.length ? `<div class="validation-rows">${entries.map(([name, value], index) => {
+        const check = typeof value === 'string' ? {status:value} : value || {};
+        const warning = housekeeping && ['FAIL', 'FAILED', 'WARN'].includes(check.status);
+        const status = warning ? 'WARNING' : check.status || 'UNKNOWN';
+        return validationDisclosure(`${prefix}-${index}`, `<span class="validation-row-label">${esc(names[name] || name)}</span>${overviewBadge(status)}`,
+          validationRaw(check));
+      }).join('')}</div>` : '<p class="muted">Henüz kayıtlı kontrol yok.</p>';
+    }
+
+    function renderValidation(project, runs) {
+      const quality = validationReport(project.quality_report);
+      const device = validationReport(project.device_report);
+      const release = validationReport(project.release_report);
+      const verdict = lastVerdict(runs);
+      const criteria = Array.isArray(verdict?.criteria) ? verdict.criteria : [];
+      const groups = deviceGroups(device);
+      const deviceTone = groups.passed && groups.warning ? 'warn' : device?.failure_kind === 'environment' ? 'warn' : undefined;
+      const releaseStatus = project.release_evaluating ? 'RUNNING' : release?.status || 'NOT RUN';
+      const acceptanceCount = criteria.length ? `${criteria.filter(c => c.status === 'PASS').length} / ${criteria.length}` : '—';
+      const summary = (name, status, note = '', semanticTone) => `<div><dt>${name}</dt><dd><span class="muted">${esc(note)}</span>${overviewBadge(status, semanticTone)}</dd></div>`;
+      const section = (title, status, body, semanticTone) => `<section class="validation-section"><h2>${title}${overviewBadge(status, semanticTone)}</h2>${body}</section>`;
+      const reportDetails = (key, title, report) => report ? validationDisclosure(key, esc(title), validationRaw(report)) : '';
+      const releaseIdentity = release?.identity || {};
+      return `<div class="validation project-rail">
+        <section class="overview-surface">
+          <h2>Doğrulama özeti</h2>
+          <p class="muted validation-intro">Son kayıtlı raporlar · yeniden çalışan kontroller tamamlanana kadar önceki sonuçlar görünür.</p>
+          <dl class="overview-pipeline">
+            ${summary('Kalite', quality?.status || 'NOT RUN')}
+            ${summary('Cihaz kapısı', device?.status || 'NOT RUN', groups.passed ? 'Ürün kontrolleri PASS' : '', deviceTone)}
+            ${summary('Kabul kriterleri', verdict?.status || 'NOT RUN', acceptanceCount)}
+            ${summary('Release', releaseStatus)}
+          </dl>
+        </section>
+        ${section('Kalite kapısı', quality?.status || 'NOT RUN',
+          validationChecks(Object.entries(quality?.checks || {}), 'quality') + reportDetails('quality-report', 'Tam kalite raporu / komut çıktıları', quality))}
+        ${section('Cihaz doğrulaması', device?.status || 'NOT RUN', `
+          ${groups.passed ? '<p class="muted">Kayıtlı ürün kontrollerinin tamamı PASS. Üstteki rozet raporun kayıtlı kapı durumudur; temizlik ayrı gösterilir.</p>' :
+            device?.failure_kind ? `<p class="validation-note ${device.failure_kind === 'environment' ? 'warn' : 'bad'}">${device.failure_kind === 'environment' ? 'Ortam sorunu' : 'Ürün doğrulama sorunu'} · ayrıntılar cihaz raporunda.</p>` : ''}
+          ${validationChecks(groups.product, 'device')}
+          ${reportDetails('device-report', 'Cihaz tanısı / senaryolar / tam rapor', device)}`, deviceTone)}
+        ${section(`Kabul kriterleri <span class="muted">${acceptanceCount}</span>`, verdict?.status || 'NOT RUN', `
+          ${criteria.length ? `<div class="validation-rows">${criteria.map((item, index) => validationDisclosure(`criterion-${index}`,
+            `<span class="mono">${esc(item.id)}</span>${overviewBadge(item.status || 'UNKNOWN')}<span class="validation-criterion-label">${esc(item.text || '')}</span>`,
+            `<h3>Kanıt</h3>${validationRaw(item.evidence || 'Kayıtlı kanıt yok.')}${reportDetails(`criterion-raw-${index}`, 'Kriter kaydının tamamı', item)}`)).join('')}</div>` : '<p class="muted">Henüz kriter sonucu yok.</p>'}
+          ${verdict?.notes?.length ? reportDetails('review-notes', 'İnceleme notları · engelleyici değil', verdict.notes) : ''}
+          ${reportDetails('review-report', 'Tam inceleme kararı', verdict)}
+          ${project.final_message ? reportDetails('final-message', 'Sonuç özeti', project.final_message) : ''}`)}
+        ${section('Release hazırlığı', releaseStatus, `
+          <p class="muted">${project.release_evaluating ? 'Değerlendirme sürüyor. Aşağıdaki veriler varsa önceki rapora aittir.' : release?.status === 'READY' ? 'READY: sideload ile harici test için uygun. Mağaza dağıtımı doğrulanmadı.' : release?.status === 'BLOCKED' ? 'Release adayı engellendi. Bu sonuç projenin kabul durumunu değiştirmez.' : project.status === 'accepted' ? 'Henüz değerlendirilmedi. Başlıktaki eylemle release hazırlığını değerlendirebilirsiniz.' : 'Release değerlendirmesi proje kabul edildikten sonra kullanılabilir.'}</p>
+          ${release ? `<dl class="kv validation-release-meta">
+            <dt>Application ID</dt><dd>${esc(releaseIdentity.application_id || '—')}</dd>
+            <dt>Ad</dt><dd>${esc(releaseIdentity.display_name || '—')}</dd>
+            <dt>Sürüm</dt><dd>${esc(releaseIdentity.version_name || '—')}+${esc(releaseIdentity.version_code ?? '—')}</dd>
+            <dt>Artefakt</dt><dd>${release.artifact?.size_bytes != null ? `${num(Math.round(release.artifact.size_bytes / 1024 / 1024 * 10) / 10)} MiB` : '—'}</dd>
+            <dt>Uyarılar</dt><dd>${num(release.warnings?.length)}</dd>
+          </dl>
+          ${(release.blockers || []).map((item, index) => validationDisclosure(`release-blocker-${index}`, `${overviewBadge('BLOCKED')}<span>${esc(item.title || item.id)}</span>`, validationRaw(item))).join('')}
+          ${(release.warnings || []).length ? reportDetails('release-warnings', `Uyarılar (${release.warnings.length}) · engelleyici değil`, release.warnings) : ''}
+          ${reportDetails('release-report', 'Teknik release raporu · SHA-256 / yol / imza / manifest', release)}` : ''}`)}
+        <section class="validation-section validation-housekeeping">
+          <h2>Ortam / temizlik ${groups.warning ? overviewBadge('WARNING') : ''}</h2>
+          <p class="muted">Temizlik ürün doğrulamasından ayrıdır.${groups.passed ? ' Kayıtlı ürün kontrolleri PASS olarak korunur.' : ''}</p>
+          ${validationChecks(groups.housekeeping, 'housekeeping', true)}
+          ${reportDetails('device-target', 'Android hedef sınıflandırması', device?.target)}
+          ${reportDetails('device-notes', 'Test sonrası notlar', device?.notes?.length ? device.notes : null)}
+          ${device?.reason || project.error ? reportDetails('project-diagnostics', 'Kayıtlı bekleme / hata ayrıntıları', {failure_kind:device?.failure_kind, reason:device?.reason, project_error:project.error}) : ''}
+        </section>
+      </div>`;
+    }
+
+
+    /** Only recorded intervals (or a currently running interval) support timing. */
+    function executionIntervals(runs, now = Date.now()) {
+      return runs.flatMap(run => {
+        const start = run.started_at ? Date.parse(run.started_at) : NaN;
+        const end = run.completed_at ? Date.parse(run.completed_at) : run.status === 'running' ? now : NaN;
+        return Number.isFinite(start) && Number.isFinite(end) && end >= start ? [{run, start, end}] : [];
+      });
+    }
+
+    function executionPeak(intervals) {
+      // End before start at equal timestamps: adjacent runs do not overlap.
+      const points = intervals.filter(i => i.end > i.start).flatMap(i => [[i.start, 1], [i.end, -1]])
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      let current = 0, peak = 0;
+      for (const [, delta] of points) { current += delta; peak = Math.max(peak, current); }
+      return peak;
+    }
+
+    function executionTask(run, tasks) {
+      // A role alone is ambiguous when several builders are active.
+      const named = tasks.filter(t => run.agent_name === `Flutter Builder: ${t.name}` || run.agent_name === t.name);
+      if (named.length === 1) return named[0];
+      const workspace = tasks.filter(t => t.workspace_path && t.workspace_path === run.workspace_path);
+      if (workspace.length === 1) return workspace[0];
+      const role = tasks.filter(t => t.role === run.role);
+      return role.length === 1 ? role[0] : null;
+    }
+
+    function executionBadge(status) {
+      const text = { running:'RUNNING', completed:'COMPLETED', failed:'FAILED', pending:'WAITING',
+        ready:'READY', blocked:'BLOCKED', skipped:'SKIPPED' }[status] || label(status);
+      return overviewBadge(text, overviewTone(status));
+    }
+
+    function executionDetails(key, summary, body, rail = '') {
+      return `<details class="execution-details ${rail}" data-overview="execution-${esc(key).replaceAll('"', '&quot;')}">
+        <summary>${summary}</summary><div class="execution-detail">${body}</div></details>`;
+    }
+
+    function renderExecution(project, tasks, runs, events, active) {
+      const intervals = executionIntervals(runs);
+      const intervalFor = run => intervals.find(i => i.run === run);
+      const valid = new Set(intervals.map(i => i.run));
+      // Keep the existing sum / union definition of effective parallelism.
+      const totals = agentTotals(runs.map(r => valid.has(r) ? r : {...r, started_at:null}));
       const summed = totals.reduce((sum, entry) => sum + entry.ms, 0);
-      const busy = agentBusyMs(runs);
+      const busy = agentBusyMs(runs.filter(r => valid.has(r)));
       const overlap = busy > 0 ? summed / busy : 0;
+      const billable = runs.reduce((sum, r) => sum + Math.max(0, (r.input_tokens || 0) - (r.cached_input_tokens || 0)) + Number(r.output_tokens || 0), 0);
+      const done = tasks.filter(t => t.status === 'completed').length;
+      const completedRuns = runs.filter(r => r.status === 'completed').length;
+      const repairRuns = runs.filter(r => ['repair', 'device_repair', 'review_repair'].includes(r.role)).length;
+      const metric = (value, title, note = '') => `<div><b>${value}</b><span>${title}</span>${note ? `<small>${note}</small>` : ''}</div>`;
+      const runDuration = run => intervalFor(run) ? formatMs(intervalFor(run).end - intervalFor(run).start) : '—';
+      const roleRows = totals.map(entry => `<tr><td>${esc(roleLabel(entry.role))}</td><td class="num">${entry.count}</td>
+        <td class="num">${formatMs(entry.ms)}</td><td class="num">${summed ? Math.round(entry.ms / summed * 100) : 0}%</td>
+        <td class="num">${num(entry.fresh)}</td><td class="num">${num(entry.out)}</td></tr>`).join('');
+      return `<div class="execution">
+        <section aria-label="Çalışma özeti" class="execution-metrics project-metrics project-rail">
+          ${metric(`${done} / ${tasks.length}`, 'Tamamlanan görev')}
+          ${metric(String(active.length), 'Aktif agent', 'Anlık eşzamanlılık')}
+          ${metric(duration(project.created_at, RUNNING.includes(project.status) ? null : project.updated_at), 'Geçen süre', 'Beklemeler dahil')}
+          ${metric(intervals.length ? String(executionPeak(intervals)) : '—', 'Tepe eşzamanlılık', 'Kayıtlı zaman aralıkları')}
+        </section>
+        <section class="project-rail"><h2>Şu anda</h2>
+          ${active.length ? `<div class="execution-active">${active.map(run => {
+            const task = executionTask(run, tasks);
+            const activity = agentActivity(events, run.agent_name);
+            return executionDetails(`active-${run.id}`, `<span class="execution-assignment"><strong>${esc(roleLabel(run.role))}</strong><span title="${esc(task?.name || run.agent_name).replaceAll('"', '&quot;')}">${esc(task?.name || run.agent_name)}</span></span>${executionBadge(run.status)}<span class="mono">${runDuration(run)}</span>`,
+              `<dl class="kv"><dt>Agent</dt><dd>${esc(run.agent_name)}</dd><dt>Görev</dt><dd>${esc(task?.name || 'Kesin görev eşleşmesi yok')}</dd><dt>Worktree</dt><dd>${esc(run.workspace_path || '—')}</dd><dt>Son komut</dt><dd>${esc(activity.command || 'Kayıtlı komut yok')}</dd><dt>Dosya değişimi</dt><dd>${num(activity.files)}</dd><dt>Context</dt><dd>${num(run.context_chars)} karakter</dd><dt>Çıkış tokenı</dt><dd>${num(run.output_tokens)}</dd></dl>`);
+          }).join('')}</div>` : `<p class="execution-idle">Şu anda çalışan agent yok. <span class="muted">${completedRuns} koşu tamamlandı · ${runs.length} toplam koşu.</span></p>`}
+        </section>
+        <section class="project-rail project-rail--wide"><h2>Görev ilerlemesi <span class="muted">${done} / ${tasks.length}</span></h2>
+          <p class="execution-caption">Görev listesi sıra veya dalga belirtmez; bağımlılıklar görev ayrıntılarındadır.</p>
+          ${renderExecutionTasks(tasks)}
+        </section>
+        <section class="project-rail project-rail--wide"><h2>Zaman çizelgesi / paralellik</h2>
+          ${renderExecutionTimeline(intervals)}
+          ${intervals.length < runs.length ? `<p class="execution-caption">${runs.length - intervals.length} koşunun zaman aralığı eksik/geçersiz; süre ve eşzamanlılık ölçümlerine dahil edilmedi.</p>` : ''}
+        </section>
+        <section class="project-rail"><h2>Performans</h2><div class="execution-metrics project-metrics execution-secondary">
+          ${metric(String(runs.length), 'Agent koşusu', `${repairRuns} onarım rolü koşusu`)}
+          ${metric(formatMs(summed), 'Toplam agent süresi')}
+          ${metric(formatMs(busy), 'Agent meşgul süresi', 'En az bir agent aktif')}
+          ${metric(busy ? `×${overlap.toFixed(2)}` : '—', 'Etkin paralellik', 'Toplam süre / meşgul süre')}
+        </div></section>
+        <section class="project-rail"><h2>Token bütçesi</h2>
+          <div class="execution-budget-line"><strong>${num(billable)}</strong><span>faturalanabilir token · proje toplamı</span><span class="execution-budget-limit">${tokenBudget ? `${num(tokenBudget)} / koşu limiti` : 'Sınırsız'}</span></div>
+          ${tokenBudget ? `<div class="budget" aria-label="Proje toplamının tek koşu limitine oranı"><i style="width:${Math.min(100, billable / tokenBudget * 100)}%"></i></div>
+            <p class="execution-caption">Proje toplamı / tek koşu limiti: %${num(Math.round(billable / tokenBudget * 100))}. Bu oran güncel koşunun bütçe tüketimi değildir.</p>` : ''}
+          <p class="execution-caption">Faturalanabilir = cache dışı giriş + çıkış. Devam ettirmek yeni bütçe başlatır; güncel koşunun sıfırlama başlangıcı API’de bulunmuyor.</p>
+        </section>
+        ${executionDetails('roles', `Rol bazında süre ve tokenlar <span class="muted">${totals.length} rol</span>`,
+          `<div class="execution-table" tabindex="0" role="region" aria-label="Rol tablosu"><table><thead><tr><th>Rol</th><th>Koşu</th><th>Toplam süre</th><th>Pay</th><th>Cache dışı giriş</th><th>Çıkış</th></tr></thead><tbody>${roleRows || '<tr><td colspan="6">Henüz koşu yok.</td></tr>'}</tbody></table></div>`, 'project-rail project-rail--wide')}
+        ${executionDetails('runs', `Tekil agent koşuları <span class="muted">${runs.length} koşu</span>`,
+          runs.length ? runs.slice().reverse().map(run => {
+            const task = executionTask(run, tasks);
+            return executionDetails(`run-${run.id}`, `<span class="execution-assignment"><strong title="${esc(run.agent_name).replaceAll('"', '&quot;')}">${esc(run.agent_name)}</strong><span>${esc(roleLabel(run.role))}${task ? ` · ${esc(task.name)}` : ''}</span></span>${executionBadge(run.status)}<span class="mono">${runDuration(run)}</span>${run.retry_count ? `<span class="muted">${num(run.retry_count)} retry</span>` : ''}`,
+              `<dl class="kv"><dt>Başlangıç</dt><dd>${esc(run.started_at || '—')}</dd><dt>Bitiş</dt><dd>${esc(run.completed_at || '—')}</dd><dt>Cache dışı giriş</dt><dd>${num(Math.max(0, (run.input_tokens || 0) - (run.cached_input_tokens || 0)))}</dd><dt>Çıkış</dt><dd>${num(run.output_tokens)}</dd></dl>${validationRaw(run)}`);
+          }).join('') : '<p class="execution-caption">Henüz agent koşusu yok.</p>', 'project-rail project-rail--wide')}
+      </div>`;
+    }
 
-      const totalsBlock = runs.length ? `
-        <div class="grid cols-4 section-gap">
-          <div class="stat"><b>${formatMs(summed)}</b><span>Toplam agent süresi</span></div>
-          <div class="stat"><b>${formatMs(busy)}</b><span>Agent meşgul süresi</span></div>
-          <div class="stat"><b>x${overlap.toFixed(2)}</b><span>Örtüşme</span></div>
-          <div class="stat"><b>${runs.length}</b><span>Agent koşusu</span></div>
-        </div>
-        ${tokenBudget ? `<div class="card section-gap">
-          <h3>Token bütçesi <span class="right">${num(billable)} / ${num(tokenBudget)}</span></h3>
-          <div class="card-body">
-            <div class="budget"><i style="width:${Math.min(100, Math.round((billable / tokenBudget) * 100))}%"></i></div>
-            <div class="dim" style="margin-top:7px;font-size:12px">
-              Faturalanabilir = cache dışı giriş + çıkış. Sınır kesintisiz bir çalışma içindir;
-              devam ettirmek yeni bütçe başlatır.
-            </div>
-          </div>
-        </div>` : ''}
-        <div class="card section-gap">
-          <h3>Rol bazında süre <span class="right">toplam ${formatMs(summed)}</span></h3>
-          <table>
-            <thead><tr><th>Rol</th><th style="text-align:right">Koşu</th>
-              <th style="text-align:right">Toplam süre</th><th style="text-align:right">Pay</th>
-              <th style="text-align:right">Yeni giriş</th><th style="text-align:right">Çıkış</th></tr></thead>
-            <tbody>${totals.map(entry => `
-              <tr>
-                <td><span class="role">${esc(roleLabel(entry.role))}</span></td>
-                <td class="num">${entry.count}</td>
-                <td class="num">${formatMs(entry.ms)}</td>
-                <td class="num dim">${summed ? Math.round((entry.ms / summed) * 100) : 0}%</td>
-                <td class="num">${num(entry.fresh)}</td>
-                <td class="num">${num(entry.out)}</td>
-              </tr>`).join('')}</tbody>
-          </table>
-        </div>` : '';
+    function renderExecutionTasks(tasks) {
+      if (!tasks.length) return '<p class="execution-idle">Henüz görev planı yok.</p>';
+      return `<div class="execution-tasks">${tasks.map(task => {
+        const retryable = ['failed', 'paused_context', 'paused_usage', 'interrupted'].includes(task.status);
+        const dependencies = (task.depends_on || []).map(id => tasks.find(t => t.id === id)?.name || id);
+        return `<details class="stage execution-task ${overviewTone(task.status)}" data-task="${esc(task.id).replaceAll('"', '&quot;')}">
+          <summary><span class="execution-assignment"><strong title="${esc(task.name).replaceAll('"', '&quot;')}">${esc(task.name)}</strong><span>${esc(roleLabel(task.role))}${dependencies.length ? ` · ${dependencies.length} bağımlılık` : ''}${task.attempt_count ? ` · ${num(task.attempt_count)} deneme` : ''}</span></span>${executionBadge(task.status)}<span class="execution-task-time">${task.status === 'running' ? taskTiming(task) : task.completed_at ? 'Bitiş ' + taskTiming(task) : '—'}</span></summary>
+          <div class="execution-detail"><dl class="kv"><dt>Bağımlılıklar</dt><dd>${esc(dependencies.join(', ') || 'Yok')}</dd><dt>Yollar</dt><dd>${esc((task.allowed_paths || []).join(', ') || '—')}</dd><dt>Çıktılar</dt><dd>${esc((task.required_outputs || []).join(', ') || '—')}</dd><dt>Branch</dt><dd>${esc(task.branch_name || '—')}</dd><dt>Checkpoint</dt><dd>${esc(task.checkpoint_commit || '—')}</dd></dl>
+            ${retryable ? `<button class="btn" data-act="retry" data-task="${encodeURIComponent(task.id)}">Görevi yeniden dene</button>` : ''}
+            ${task.error ? `<pre class="log">${esc(task.error)}</pre>` : ''}
+            ${executionDetails(`task-raw-${task.id}`, 'Tam görev kaydı', validationRaw(task))}
+          </div></details>`;
+      }).join('')}</div>`;
+    }
 
-      return `${live}${totalsBlock}
-        <div class="card section-gap">
-          <h3>Agent geçmişi <span class="right">${runs.length} koşu</span></h3>
-          <table>
-            <thead><tr><th>Agent</th><th>Rol</th><th style="text-align:right">Süre</th>
-              <th style="text-align:right">Yeni giriş</th><th style="text-align:right">Çıkış</th><th style="text-align:right">Başlangıç</th></tr></thead>
-            <tbody>${history || '<tr><td colspan="6" class="dim">Henüz agent koşusu yok.</td></tr>'}</tbody>
-          </table>
+    function renderExecutionTimeline(intervals) {
+      if (!intervals.length) return '<p class="execution-idle">Zaman çizelgesi için kayıtlı başlangıç/bitiş aralığı yok.</p>';
+      const first = Math.min(...intervals.map(i => i.start));
+      const last = Math.max(...intervals.map(i => i.end));
+      const span = Math.max(1, last - first);
+      return `<p class="execution-caption">Ortak zaman ölçeği · ${esc(new Date(first).toLocaleString('tr-TR'))} → ${esc(new Date(last).toLocaleString('tr-TR'))}. Boşluklar beklemeleri içerir.</p>
+        <div class="execution-timeline" tabindex="0" role="region" aria-label="Agent koşularının ortak zaman ölçeği">
+          ${intervals.slice().sort((a,b) => a.start - b.start).map(({run, start, end}) => `<div class="execution-timeline-row">
+            <span class="execution-timeline-name" title="${esc(run.agent_name).replaceAll('"','&quot;')}">${esc(run.agent_name)}</span>
+            <div class="execution-track" title="${esc(`${run.started_at} → ${run.completed_at || 'Şimdi'} · ${label(run.status)}`).replaceAll('"','&quot;')}"><i class="${run.status === 'running' ? 'run' : run.status === 'failed' ? 'bad' : ''}" style="left:${(start-first)/span*100}%;width:${(end-start)/span*100}%"></i></div>
+            <span class="mono">${formatMs(end-start)}</span></div>`).join('')}
         </div>`;
     }
 
-    function renderPipeline(tasks) {
-      // Reveal a task once when it starts running; after that the user decides.
-      for (const task of tasks) {
-        if (task.status === 'running' && !autoOpened.has(task.id)) {
-          autoOpened.add(task.id);
-          openTasks.add(task.id);
-        }
-      }
-      if (!tasks.length) return '<div class="card"><div class="card-body dim">Görev grafiği hazırlanıyor…</div></div>';
-      return `<div class="flow">${tasks.map(task => `
-        <details class="stage" data-task="${esc(task.id)}">
-          <summary class="stage-head">
-            <i class="dot ${tone(task.status)}"></i>
-            <b>${esc(task.name)}</b>
-            <span class="role">${esc(roleLabel(task.role))}</span>
-            <span class="meta">${esc(label(task.status))} · ${task.attempt_count} deneme · ${taskTiming(task)}</span>
-          </summary>
-          <div class="stage-detail">
-            <dl class="kv">
-              <dt>Yollar</dt><dd>${esc((task.allowed_paths || []).join(', ') || '—')}</dd>
-              ${(task.required_outputs || []).length ? `<dt>Çıktılar</dt><dd>${esc(task.required_outputs.join(', '))}</dd>` : ''}
-              ${(task.depends_on || []).length ? `<dt>Bağımlılık</dt><dd>${esc(task.depends_on.map(id => id.split(':').pop()).join(', '))}</dd>` : ''}
-              ${task.branch_name ? `<dt>Branch</dt><dd>${esc(task.branch_name)}</dd>` : ''}
-              ${task.checkpoint_commit ? `<dt>Checkpoint</dt><dd>${esc(task.checkpoint_commit.slice(0, 10))}</dd>` : ''}
-            </dl>
-            ${task.error ? `<pre class="log" style="color:#f0a5a0">${esc(task.error)}</pre>` : ''}
-            ${['failed', 'paused_context', 'paused_usage', 'interrupted'].includes(task.status)
-              ? `<div><button class="btn" data-act="retry" data-task="${encodeURIComponent(task.id)}">Görevi yeniden dene</button></div>` : ''}
+    function renderActivity(events, project, active) {
+      const groups = [['all', 'Tümü'], ['agents', 'Agentlar'], ['validation', 'Doğrulama'],
+        ['system', 'Sistem'], ['errors', 'Hatalar']];
+      const matches = event => eventFilter === 'all'
+        || (eventFilter === 'errors' ? activitySeverity(event).attention : activityCategory(event) === eventFilter);
+      const counts = Object.fromEntries(groups.map(([key]) => [key,
+        events.filter(event => key === 'all' || (key === 'errors'
+          ? activitySeverity(event).attention : activityCategory(event) === key)).length]));
+      const visible = events.filter(matches).slice().reverse();
+      const attention = counts.errors;
+      const rows = visible.map(event => {
+        const severity = activitySeverity(event);
+        const summary = String(activitySummary(event) || '').slice(0, 320);
+        const context = activityContext(event);
+        return `<article class="activity-event ${severity.tone}">
+          <div class="activity-event-main">
+            <time class="activity-time" datetime="${esc(event.created_at).replaceAll('"', '&quot;')}">${clock(event.created_at)}</time>
+            <i class="activity-dot" aria-hidden="true"></i>
+            <div class="activity-copy">
+              <div class="activity-title">${esc(activityTitle(event))}</div>
+              ${summary ? `<div class="activity-summary-text">${esc(summary)}</div>` : ''}
+              ${context ? `<div class="activity-context">${context}</div>` : ''}
+            </div>
+            <span class="activity-status">${esc(severity.label)}</span>
           </div>
-        </details>`).join('')}</div>`;
-    }
-
-    function renderActivity(events) {
-      const groups = [['all', 'Tümü'], ['command', 'Komutlar'], ['file', 'Dosyalar'],
-        ['message', 'Agent mesajları'], ['gate', 'Kapılar'], ['stderr', 'stderr']];
-      const matches = event => {
-        const type = event.payload && event.payload.item && event.payload.item.type;
-        if (eventFilter === 'all') return true;
-        if (eventFilter === 'command') return type === 'command_execution';
-        if (eventFilter === 'file') return type === 'file_change';
-        if (eventFilter === 'message') return type === 'agent_message';
-        if (eventFilter === 'stderr') return event.event_type === 'stderr';
-        return !event.event_type.startsWith('item.') && !['stderr', 'turn.started', 'turn.completed', 'thread.started'].includes(event.event_type);
-      };
-      const rows = events.filter(matches).slice(-200).reverse().map(event => `
-        <div class="ev-row">
-          <span class="t">${clock(event.created_at)}</span>
-          <span class="k">${esc(event.payload && event.payload.agent ? roleLabel(event.payload.role) : event.event_type)}</span>
-          <span class="d">${esc(eventSummary(event) || event.event_type)}</span>
-        </div>`).join('');
-      return `
-        <div class="filters">${groups.map(([key, text]) =>
-          `<button class="chip ${eventFilter === key ? 'on' : ''}" data-filter="${key}">${text}</button>`).join('')}</div>
-        <div class="card"><div class="events">${rows || '<div class="ev-row"><span class="d dim">Kayıt yok.</span></div>'}</div></div>`;
+          <details class="activity-details" data-overview="activity-${event.id}">
+            <summary>Detaylar</summary><div class="activity-detail">${activityDetails(event)}</div>
+          </details>
+        </article>`;
+      }).join('');
+      const eventCount = events.length === 400 ? 'Son 400 olay' : `${num(events.length)} olay`;
+      const latest = events.length ? new Date(events[events.length - 1].created_at).toLocaleString('tr-TR') : '';
+      return `<div class="activity project-rail">
+        ${events.length ? `<div class="activity-summary">
+          <strong>${eventCount}</strong>
+          ${attention ? `<span class="attention">${num(attention)} dikkat gerektiren</span>` : '<span>Dikkat gerektiren olay yok</span>'}
+          <span>Son olay ${esc(latest)}</span>
+          ${active.length ? `<span>${num(active.length)} agent çalışıyor</span>` : `<span>${esc(label(project.status))}</span>`}
+          <span>En yeni üstte</span>
+        </div>` : ''}
+        <div class="activity-filters" role="group" aria-label="Etkinlik filtreleri">${groups.map(([key, text]) =>
+          `<button class="activity-filter ${eventFilter === key ? 'on' : ''}" data-filter="${key}" aria-pressed="${eventFilter === key}">${text}<small>${num(counts[key])}</small></button>`).join('')}</div>
+        ${events.length ? `<div class="activity-events">${rows || '<p class="activity-empty">Bu filtrede olay yok.</p>'}</div>`
+          : '<p class="activity-empty">Henüz etkinlik kaydedilmedi.</p>'}
+      </div>`;
     }
 
     /* ---------- interactions ---------- */
 
     function wire() {
-      for (const node of document.querySelectorAll('.tab')) {
+      for (const node of document.querySelectorAll('[data-tab]')) {
         node.onclick = () => {
           captureScroll();
           activeTab = node.dataset.tab;
@@ -931,7 +1325,7 @@
           body: JSON.stringify({ spec_content: loadedSpec }),
         });
         selectedId = project.id;
-        activeTab = 'agents';
+        activeTab = 'execution';
         railSignature = null;
         lastSignature = null;
         el('create-dialog').close();

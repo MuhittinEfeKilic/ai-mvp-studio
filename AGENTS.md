@@ -1,8 +1,11 @@
 # AI MVP Studio — Agent Çalışma Sözleşmesi
 
 Bu dosya repository üzerinde çalışan tüm AI agent'ları için bağlayıcı proje
-bağlamıdır. İşe başlamadan önce `README.md` ve `PROJECT_STATUS.md` dosyalarını da
-tamamen okuyun.
+bağlamıdır. İşe başlamadan önce:
+
+- `docs/PROJECT_STATUS.md` içindeki mevcut hedefi ve görevle ilgili bilinen sorunları okuyun.
+- `README.md` yalnız görev ürün davranışı, kullanım veya mimari bağlam gerektiriyorsa okunmalıdır.
+- Küçük ve lokal görevlerde bu dosyaları tamamen okumayın; yalnız ilgili bölümleri inceleyin.
 
 ## Amaç
 
@@ -48,11 +51,14 @@ Claude entegrasyonu henüz kapsam dışıdır.
 ## Standart çalışma sırası
 
 1. `git status --short` ile mevcut değişiklikleri inceleyin.
-2. `PROJECT_STATUS.md` içindeki mevcut hedefi ve bilinen sorunları okuyun.
+2. `docs/PROJECT_STATUS.md` içindeki mevcut hedefi ve bilinen sorunları okuyun.
 3. Değiştirilecek akışın kaynaklarını ve testlerini birlikte inceleyin.
 4. Kapsamı küçük tutarak uygulayın.
-5. En az `npm run check` ve `npm test` çalıştırın.
-6. Davranış değiştiyse README ve `PROJECT_STATUS.md` dosyasını güncelleyin.
+5. Değişikliğe uygun en küçük doğrulamayı çalıştırın:
+   - Kod davranışı değiştiyse en az `npm run check` ve ilgili testleri çalıştırın.
+   - Ortak/pipeline davranışı değiştiyse tam `npm test` çalıştırın.
+   - Yalnız dokümantasyon veya statik içerik değişikliğinde gereksiz test çalıştırmayın.
+6. Davranış değiştiyse README ve `docs/PROJECT_STATUS.md` dosyasını güncelleyin.
 7. Sonuçta değişen dosyaları, test sonucunu ve kalan riski açıkça bildirin.
 
 ## Mimari sınırlar
@@ -76,6 +82,8 @@ eklemeden önce gerçekten gerekli olup olmadığını değerlendirin.
 
 ## Tamamlanma ölçütü
 
-Bir Studio değişikliği; sözdizimi kontrolleri, tam test paketi ve etkilenen gerçek
-akış doğrulandıktan sonra tamamlanır. Mobil ürün için gerçek cihaz/emülatör testi
-yapılmadıysa teknik kalite ile ürün kabulünü birbirinden ayırın.
+Davranışsal bir Studio değişikliği; sözdizimi kontrolleri, değişikliğin kapsamına uygun
+testler ve etkilenen gerçek akış doğrulandıktan sonra tamamlanır. Ortak/pipeline davranışını
+etkileyen değişikliklerde tam test paketi çalıştırılmalıdır. Yalnız dokümantasyon veya statik
+içerik değişikliklerinde tam test paketi zorunlu değildir. Mobil ürün için gerçek
+cihaz/emülatör testi yapılmadıysa teknik kalite ile ürün kabulünü birbirinden ayırın.

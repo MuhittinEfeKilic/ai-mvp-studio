@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm start",
+      "type": "npm",
+      "script": "start",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "npm run check",
+      "type": "npm",
+      "script": "check",
+      "problemMatcher": []
+    },
+    {
+      "label": "npm test",
+      "type": "npm",
+      "script": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Open Claude Code",
+      "type": "shell",
+      "command": "claude",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}
