@@ -4,7 +4,8 @@ import path from 'node:path';
 import { runProcess } from './async-process-runner.mjs';
 
 import {
-  ensureBootedDevice, parseAdbDevices, prepareDeviceForTest, wipeAvdAfterTest,
+  describeDeviceTarget, detectDeviceTarget, ensureBootedDevice, parseAdbDevices,
+  prepareDeviceForTest, wipeAvdAfterTest,
 } from './android-environment.mjs';
 
 export { parseAdbDevices };
@@ -135,7 +136,15 @@ export function classifyDeviceFailure(logText) {
   return { kind: 'product', signal: null };
 }
 
-const DEVICE_CHECK_ORDER = ['flow_coverage', 'device_storage', 'integration_test', 'apk_install', 'launch', 'avd_wipe'];
+const DEVICE_CHECK_ORDER = ['flow_coverage', 'device_storage', 'integration_test', 'apk_install', 'launch'];
+
+/**
+ * Post-test cleanup. It runs after the product verdict is already decided, so it
+ * is reported outside `checks` and can never change the result: a measured run
+ * passed all six critical flows and was still parked as WAITING because the
+ * emulator console could not be reached to reset the AVD afterwards.
+ */
+export const DEVICE_HOUSEKEEPING_ORDER = Object.freeze(['app_cleanup', 'avd_wipe']);
 
 const DEVICE_CHECK_LABELS = Object.freeze({
   flow_coverage: 'Kritik akış kapsamı',
@@ -143,6 +152,7 @@ const DEVICE_CHECK_LABELS = Object.freeze({
   integration_test: 'Cihazda integration test',
   apk_install: 'APK kurulumu',
   launch: 'Uygulama açılışı',
+  app_cleanup: 'Test sonrası hedef paket kaldırma',
   avd_wipe: 'Test sonrası AVD temizliği',
 });
 
@@ -265,11 +275,36 @@ function environmentWait(report, checkName, logText) {
 
 const productFailure = report => ({ ...report, failure_kind: 'product' });
 
+/**
+ * `flutter test` overwrites the delivery APK with the instrumented test build,
+ * so the gate keeps a backup and restores it afterwards. A Studio restart
+ * between those two steps leaves the backup on disk while the file at apkPath
+ * is the test build. The backup is the pristine delivery APK by construction,
+ * so a stale one is restored and removed before the fresh copy is taken.
+ * Refusing to overwrite it instead broke every later device run for that
+ * project until the file was deleted by hand.
+ */
+export function reclaimApkBackup(apkPath, backupPath) {
+  if (!fs.existsSync(backupPath)) return null;
+  const replacedExistingApk = fs.existsSync(apkPath);
+  fs.copyFileSync(backupPath, apkPath);
+  fs.rmSync(backupPath, { force: true });
+  return { restored_delivery_apk: true, replaced_existing_apk: replacedExistingApk };
+}
+
+/** Restores the delivery APK; tolerates a backup an outside process removed. */
+export function restoreApkBackup(apkPath, backupPath) {
+  if (!fs.existsSync(backupPath)) return false;
+  fs.copyFileSync(backupPath, apkPath);
+  fs.rmSync(backupPath, { force: true });
+  return true;
+}
+
 export async function runAndroidDeviceGate({
   workspace, apkPath, packageName, flows, flutterExecutable, adbExecutable,
   run = defaultRun, acquireDevice = ensureBootedDevice,
   prepareDevice = prepareDeviceForTest, minimumFreeMb = 1536,
-  wipeDevice = wipeAvdAfterTest,
+  wipeDevice = wipeAvdAfterTest, detectTarget = detectDeviceTarget,
 }) {
   const runDeviceCommand = (command, args) => run(command, args, {
     cwd: workspace,
@@ -301,24 +336,48 @@ export async function runAndroidDeviceGate({
   }
   const device = { id: acquired.device };
   report.device = device.id;
+  // Which supported Android runtime the product was actually validated against.
+  // Naming it keeps the report honest and decides which target-specific
+  // operations — an AVD wipe today — are allowed to run at all.
+  const target = await detectTarget({ run: runDeviceCommand, adb: adbExecutable, device: device.id });
+  report.target = target;
+  report.logs.device_target = describeDeviceTarget(target);
+  /**
+   * Runs the post-test cleanup and records it in `housekeeping`. The product
+   * verdict is already decided at this point, so a failure here becomes a
+   * warning note instead of downgrading the result. It stays fully visible: a
+   * host whose emulator can no longer be reset is a real problem, just not a
+   * defect of the generated application.
+   */
   const finish = async result => {
     const removed = await runAdb(['-s', device.id, 'uninstall', packageName]);
     result.logs.app_cleanup = outputOf(removed);
     const absent = /unknown package|not installed/i.test(outputOf(removed));
-    result.checks.app_cleanup = { status: removed.status === 0 || absent ? 'PASS' : 'FAIL' };
+    const cleanup = {
+      status: removed.status === 0 || absent ? 'PASS' : 'FAIL',
+      exit_code: removed.status,
+      details: removed.status === 0 || absent
+        ? 'Hedef paket cihazdan kaldırıldı.'
+        : outputOf(removed) || 'Hedef uygulama kaldırılamadı.',
+    };
     const wiped = await wipeDevice({
       run: runDeviceCommand,
-      adb: adbExecutable, device: device.id, workspace,
+      adb: adbExecutable, device: device.id, workspace, target,
     });
     result.logs.avd_wipe = wiped.log || wiped.details || '';
-    result.checks.avd_wipe = { status: wiped.status, avd_name: wiped.avd_name, details: wiped.details };
-    if ((wiped.status === 'FAIL' || result.checks.app_cleanup.status === 'FAIL') && result.status === 'PASS') {
-      return {
-        ...result, status: 'WAITING', failure_kind: 'environment',
-        reason: result.checks.app_cleanup.status === 'FAIL'
-          ? 'Test sonrası hedef uygulama kaldırılamadı.' : wiped.details || 'Test sonrası AVD temizliği tamamlanamadı.',
-      };
-    }
+    result.housekeeping = {
+      app_cleanup: cleanup,
+      avd_wipe: {
+        status: wiped.status, target_type: wiped.target_type ?? target.type,
+        avd_name: wiped.avd_name ?? null,
+        avd_name_source: wiped.avd_name_source ?? null,
+        details: wiped.details || 'Test sonrası AVD temizliği tamamlanamadı.',
+      },
+    };
+    const warnings = DEVICE_HOUSEKEEPING_ORDER
+      .filter(name => result.housekeeping[name]?.status === 'FAIL')
+      .map(name => `${DEVICE_CHECK_LABELS[name]}: ${result.housekeeping[name].details}`);
+    if (warnings.length) result.notes = [...(result.notes || []), ...warnings];
     return result;
   };
   if (coverage.status !== 'PASS') return finish(productFailure(report));
@@ -342,6 +401,12 @@ export async function runAndroidDeviceGate({
   const integrationTests = coverage.integration_tests;
   const suitePath = `integration_test/studio_suite_${crypto.randomUUID().replaceAll('-', '')}.dart`;
   const savedApk = `${apkPath}.studio-backup`;
+  const reclaimed = reclaimApkBackup(apkPath, savedApk);
+  if (reclaimed) {
+    report.notes = [...(report.notes || []),
+      'Önceki cihaz koşusundan kalan teslim APK yedeği geri yüklendi.'];
+    report.recovered_apk_backup = reclaimed;
+  }
   const hasApk = fs.existsSync(apkPath);
   if (hasApk) fs.copyFileSync(apkPath, savedApk, fs.constants.COPYFILE_EXCL);
   let integration;
@@ -353,10 +418,7 @@ export async function runAndroidDeviceGate({
     );
   } finally {
     fs.rmSync(path.join(workspace, suitePath), { force: true });
-    if (hasApk) {
-      fs.copyFileSync(savedApk, apkPath);
-      fs.rmSync(savedApk);
-    }
+    restoreApkBackup(apkPath, savedApk);
   }
   const results = parseDeviceSuite(outputOf(integration), integrationTests);
   const passed = integration.status === 0 && !results.failed_file;

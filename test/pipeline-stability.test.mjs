@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -76,4 +77,83 @@ test('a hung Flutter command times out without retaining the pipeline slot', asy
   assert.equal(result.timedOut, true);
   assert.equal(result.status, null);
   assert.match(result.stderr, /FLUTTER_TIMEOUT/);
+});
+
+test('a slow toolchain command leaves the event loop free for other work', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-event-loop-'));
+  let ticks = 0;
+  const ticker = setInterval(() => { ticks += 1; }, 10);
+  const started = Date.now();
+  // Stands in for `flutter pub get` on a cold cache: an external command that
+  // takes real time. Under spawnSync the loop would be frozen for all of it and
+  // no timer could fire, taking the panel and every other project with it.
+  const result = await runFlutterAsync(
+    process.execPath, ['-e', 'setTimeout(() => process.exit(0), 600)'], workspace, 10_000,
+  );
+  clearInterval(ticker);
+  const elapsed = Date.now() - started;
+  assert.equal(result.status, 0);
+  assert.ok(elapsed >= 500, `komut gerçekten beklemedi: ${elapsed}ms`);
+  assert.ok(ticks >= 10, `komut sırasında event loop bloke oldu: ${ticks} tick / ${elapsed}ms`);
+});
+
+test('two toolchain commands overlap instead of running one after another', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-overlap-'));
+  const slow = () => runFlutterAsync(
+    process.execPath, ['-e', 'setTimeout(() => process.exit(0), 500)'], workspace, 10_000,
+  );
+  const started = Date.now();
+  const results = await Promise.all([slow(), slow()]);
+  const elapsed = Date.now() - started;
+  assert.ok(results.every(result => result.status === 0));
+  // Serialised they would need ~1000ms; overlapping they need a little over 500.
+  assert.ok(elapsed < 900, `komutlar seri çalıştı: ${elapsed}ms`);
+});
+
+test('orchestration runs no toolchain command synchronously', () => {
+  const source = fs.readFileSync(new URL('../src/orchestrator.mjs', import.meta.url), 'utf8');
+  const syncCalls = source.split(/\r?\n/)
+    .map((line, index) => ({ line: line.trim(), number: index + 1 }))
+    .filter(entry => entry.line.includes('spawnSync(') && !entry.line.startsWith('*'));
+  // Only local Git plumbing may stay synchronous: bounded, offline, milliseconds.
+  // Every Flutter/Gradle/adb/aapt command goes through the async runner, because
+  // one stuck toolchain process must not freeze unrelated MVP runs.
+  assert.ok(syncCalls.length > 0, 'test kendini doğrulayamıyor');
+  for (const entry of syncCalls) {
+    assert.match(entry.line, /spawnSync\('git'/, `senkron toolchain çağrısı: ${entry.number}: ${entry.line}`);
+  }
+});
+
+test('an HTTP server keeps answering while a toolchain command is running', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-http-liveness-'));
+  const server = http.createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ status: 'ok' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const started = Date.now();
+    // The request is in flight before the command starts and is answered only
+    // by this process's event loop. Run the child synchronously instead and the
+    // response cannot be delivered until the command has finished — that is the
+    // panel freezing while another project builds.
+    const pending = fetch(`http://127.0.0.1:${port}/api/health`)
+      .then(response => response.json())
+      .then(body => ({ status: body.status, answeredAfterMs: Date.now() - started }));
+    const command = runFlutterAsync(
+      process.execPath, ['-e', 'setTimeout(() => process.exit(0), 700)'], workspace, 10_000,
+    );
+    const answer = await pending;
+    const result = await command;
+    assert.equal(result.status, 0);
+    assert.equal(answer.status, 'ok');
+    assert.ok(
+      answer.answeredAfterMs < 400,
+      `panel isteği komutun bitmesini bekledi: ${answer.answeredAfterMs}ms`,
+    );
+    assert.ok(Date.now() - started >= 600, 'komut gerçekten paralel çalışmadı');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
 });

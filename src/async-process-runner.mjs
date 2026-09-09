@@ -73,6 +73,9 @@ export function runProcess(command, args = [], options = {}) {
     let stderr = '';
     let settled = false;
     let timedOut = false;
+    // What the process reported while it was already being killed. Kept for
+    // diagnostics only; it must never become the result of a timed-out run.
+    let exitDuringTermination = null;
     child.stdout?.on('data', chunk => { stdout += chunk; });
     child.stderr?.on('data', chunk => { stderr += chunk; });
     const finish = result => {
@@ -81,15 +84,32 @@ export function runProcess(command, args = [], options = {}) {
       clearTimeout(timer);
       resolve({ stdout, stderr, timedOut, ...result });
     };
-    child.once('error', error => finish({ status: null, signal: null, error }));
-    child.once('close', (status, signal) => finish({ status, signal }));
+    /**
+     * Once the timeout fires it owns the outcome. Terminating the process tree
+     * takes a moment, and the process may well close during it — reporting that
+     * exit code would turn a timeout into an ordinary failure with no timeout
+     * error attached, which made the result depend on event ordering. Late
+     * close/error events are recorded and the timeout handler still settles.
+     */
+    const settleUnlessTimingOut = (event, result) => {
+      if (!timedOut) {
+        finish(result);
+        return;
+      }
+      exitDuringTermination = { event, status: result.status ?? null, signal: result.signal ?? null };
+    };
+    child.once('error', error => settleUnlessTimingOut('error', { status: null, signal: null, error }));
+    child.once('close', (status, signal) => settleUnlessTimingOut('close', { status, signal }));
     const timer = setTimeout(async () => {
       timedOut = true;
       const seconds = Math.max(1, Math.round(Number(timeout) / 1000));
       const timeoutMessage = `${timeoutLabel}: süreç ${seconds} saniyede tamamlanmadı.`;
       stderr = [stderr, timeoutMessage].filter(Boolean).join('\n');
       const termination = await killProcessTree(child, { platform, spawnProcess, graceMs: killGraceMs });
-      finish({ status: null, signal: 'SIGKILL', termination, error: new Error(timeoutMessage) });
+      finish({
+        status: null, signal: 'SIGKILL', termination, exit_during_termination: exitDuringTermination,
+        error: new Error(timeoutMessage),
+      });
     }, Number(timeout));
   });
 }

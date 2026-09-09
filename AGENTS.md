@@ -28,6 +28,15 @@ Claude entegrasyonu henüz kapsam dışıdır.
 - Kapılar yetkilidir: `TEST_REPORT.json` ve `DEVICE_REPORT.json` sonuçları yeniden
   yargılanmaz. Reviewer yalnız `ACCEPTANCE_CRITERIA.json` maddeleri üzerinden
   bloklayabilir; doğrulanamayan gözlem `notes` alanına yazılır.
+- Harici süreçleri (`flutter`, `gradle`, `adb`, `aapt`, `codex`) asla `spawnSync`
+  ile çalıştırmayın; hepsi `async-process-runner.mjs` üzerinden geçer. Yerel Git
+  plumbing'i tek bilinçli istisnadır ve `pipeline-stability` içindeki bekçi testi
+  bunu korur.
+- Cihaz doğrulaması desteklenen bir Android çalışma zamanı hedefine karşı yapılır:
+  Android Studio AVD, üçüncü taraf emülatör veya fiziksel cihaz. Hiçbir hedefi
+  olmadığı kategoriymiş gibi etiketlemeyin; AVD'ye özgü işlemler yalnız gerçek AVD
+  hedefinde çalışır. Test sonrası temizlik kapı değildir ve ürün kararını
+  değiştiremez.
 - `src/*.mjs` değiştikten sonra çalışan panel sunucusu yeniden başlatılmadan
   değişiklik devreye girmez; bir düzeltmeyi "işe yaramadı" diye değerlendirmeden
   önce bunu doğrulayın.
@@ -47,6 +56,7 @@ Claude entegrasyonu henüz kapsam dışıdır.
 - HTTP/UI: `src/server.mjs` ve `src/mvp_studio/static/index.html`
 - Pipeline: `src/orchestrator.mjs`
 - Codex süreç adaptörü: `src/codex-runner.mjs`
+- Bütün harici süreçler, timeout ve process-tree sonlandırma: `src/async-process-runner.mjs`
 - Kalıcılık: `src/database.mjs`
 - Spec ve task sözleşmeleri: `src/spec-validator.mjs`, `src/task-plan.mjs`
 - Paralellik/path izolasyonu: `src/task-scheduler.mjs`, `src/task-worktree.mjs`

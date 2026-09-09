@@ -5,8 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  compareBuildToolsVersions, ensureBootedDevice, isBootCompleted, isPrereleaseBuildTools,
-  parseAvailableDataKb, parseEmulatorList, prepareDeviceForTest, probeBuildTools, wipeAvdAfterTest,
+  compareBuildToolsVersions, describeDeviceTarget, detectDeviceTarget, ensureBootedDevice,
+  isBootCompleted, isPrereleaseBuildTools,
+  parseAvailableDataKb, parseEmulatorList, prepareDeviceForTest, probeBuildTools, resolveAvdName,
+  wipeAvdAfterTest,
 } from '../src/android-environment.mjs';
 
 const CONNECTED = 'List of devices attached\nemulator-5554 device product:sdk\n';
@@ -81,6 +83,8 @@ test('test cleanup factory-resets only emulator devices', async () => {
     adb, device: 'emulator-5554', workspace: sdk, sleep: async () => {},
     run: async (_command, args) => {
       calls.push(args.join(' '));
+      // A real Android Studio AVD: ranchu hardware and a readable console name.
+      if (args.includes('ro.hardware')) return { status: 0, stdout: 'ranchu\n' };
       return args.includes('name')
         ? { status: 0, stdout: 'AI_MVP_Test\nOK\n' }
         : { status: 0, stdout: 'OK' };
@@ -196,4 +200,134 @@ test('without any emulator the caller is told what was missing', async () => {
   });
   assert.equal(result.device, null);
   assert.match(result.reason, /başlatılabilecek emülatör bulunamadı/);
+});
+
+test('the AVD name falls back to device properties when the emulator console refuses', async () => {
+  const sdk = fs.mkdtempSync(path.join(os.tmpdir(), 'android-avd-name-'));
+  const adb = path.join(sdk, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb');
+  const emulator = path.join(sdk, 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
+  fs.mkdirSync(path.dirname(adb), { recursive: true });
+  fs.mkdirSync(path.dirname(emulator), { recursive: true });
+  fs.writeFileSync(emulator, 'test');
+  const asked = [];
+  // The measured host: the console port is refused, so only getprop can answer.
+  const run = async (_command, args) => {
+    asked.push(args.join(' '));
+    if (args.includes('avd')) {
+      return { status: 1, stdout: 'error: could not connect to TCP port 5554', stderr: '' };
+    }
+    if (args.includes('ro.boot.qemu.avd_name')) return { status: 0, stdout: '' };
+    if (args.includes('ro.kernel.qemu.avd_name')) return { status: 0, stdout: 'AI_MVP_Test\n' };
+    // A genuine AVD whose console is unreachable, so the wipe still applies.
+    if (args.includes('ro.hardware')) return { status: 0, stdout: 'ranchu\n' };
+    return { status: 0, stdout: 'OK' };
+  };
+
+  const resolved = await resolveAvdName({ run, adb, device: 'emulator-5554' });
+  assert.equal(resolved.name, 'AI_MVP_Test');
+  assert.equal(resolved.source, 'getprop ro.kernel.qemu.avd_name');
+  // The console stays the primary source and both properties are tried in order.
+  assert.equal(asked[0], '-s emulator-5554 emu avd name');
+  assert.deepEqual(asked.slice(1), [
+    '-s emulator-5554 shell getprop ro.boot.qemu.avd_name',
+    '-s emulator-5554 shell getprop ro.kernel.qemu.avd_name',
+  ]);
+
+  const launched = [];
+  const wiped = await wipeAvdAfterTest({
+    adb, device: 'emulator-5554', workspace: sdk, sleep: async () => {}, run,
+    launch: async (command, args) => {
+      launched.push([command, ...args].join(' '));
+      return { status: 'STARTED' };
+    },
+  });
+  assert.equal(wiped.status, 'PASS');
+  assert.equal(wiped.avd_name_source, 'getprop ro.kernel.qemu.avd_name');
+  assert.match(launched[0], /-avd AI_MVP_Test -wipe-data/);
+});
+
+test('an AVD name that no source can answer stays a reported cleanup failure', async () => {
+  const sdk = fs.mkdtempSync(path.join(os.tmpdir(), 'android-avd-missing-'));
+  const adb = path.join(sdk, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb');
+  fs.mkdirSync(path.dirname(adb), { recursive: true });
+  const wiped = await wipeAvdAfterTest({
+    adb, device: 'emulator-5554', workspace: sdk, sleep: async () => {},
+    // A real Android Studio AVD: goldfish hardware, but no readable name.
+    run: async (_command, args) => (args.includes('ro.hardware')
+      ? { status: 0, stdout: 'ranchu\n' }
+      : { status: 1, stdout: 'error: could not connect to TCP port 5554' }),
+    launch: async () => { throw new Error('wipe edilmemeliydi'); },
+  });
+  assert.equal(wiped.status, 'FAIL');
+  assert.match(wiped.details, /ne emülatör konsolundan ne de cihaz özelliklerinden/);
+  assert.match(wiped.log, /ro.kernel.qemu.avd_name/);
+});
+
+test('the supported Android targets are told apart by hardware, not by device id', async () => {
+  const adb = 'adb';
+  const properties = values => async (_command, args) => {
+    const property = args.at(-1);
+    return args.includes('getprop')
+      ? { status: 0, stdout: `${values[property] ?? ''}\n` }
+      : { status: 1, stdout: 'error: could not connect to TCP port 5554' };
+  };
+
+  // The measured host: adb reports emulator-5554 and the device spoofs a real
+  // vivo profile on Qualcomm hardware. It is a supported target, just not an AVD.
+  const foreign = await detectDeviceTarget({
+    adb, device: 'emulator-5554',
+    run: properties({ 'ro.hardware': 'qcom', 'ro.product.model': 'V2266A', 'ro.product.manufacturer': 'vivo' }),
+  });
+  assert.equal(foreign.type, 'third_party_emulator');
+  assert.equal(foreign.supports_avd_wipe, false);
+  assert.equal(describeDeviceTarget(foreign), 'Üçüncü taraf Android emülatörü (vivo V2266A, ro.hardware=qcom)');
+
+  const avd = await detectDeviceTarget({
+    adb, device: 'emulator-5554', run: properties({ 'ro.hardware': 'ranchu' }),
+  });
+  assert.equal(avd.type, 'android_studio_avd');
+  assert.equal(avd.supports_avd_wipe, true);
+
+  // Older images expose the emulator only through the qemu boot property.
+  const legacy = await detectDeviceTarget({
+    adb, device: 'emulator-5554', run: properties({ 'ro.kernel.qemu': '1' }),
+  });
+  assert.equal(legacy.type, 'android_studio_avd');
+
+  const physical = await detectDeviceTarget({
+    adb, device: 'R58M123',
+    run: properties({ 'ro.hardware': 'exynos', 'ro.product.manufacturer': 'samsung' }),
+  });
+  assert.equal(physical.type, 'physical_device');
+  assert.equal(physical.supports_avd_wipe, false);
+});
+
+test('AVD wipe is skipped for every target that is not an Android Studio AVD', async () => {
+  const sdk = fs.mkdtempSync(path.join(os.tmpdir(), 'android-foreign-emulator-'));
+  const adb = path.join(sdk, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb');
+  fs.mkdirSync(path.dirname(adb), { recursive: true });
+  const wiped = await wipeAvdAfterTest({
+    adb, device: 'emulator-5554', workspace: sdk, sleep: async () => {},
+    run: async (_command, args) => {
+      if (args.includes('ro.hardware')) return { status: 0, stdout: 'qcom\n' };
+      if (args.includes('getprop')) return { status: 0, stdout: '\n' };
+      return { status: 1, stdout: 'error: could not connect to TCP port 5554' };
+    },
+    launch: async () => { throw new Error('wipe edilmemeliydi'); },
+  });
+  // Nothing to wipe is not a failure: the run stays clean and honestly labelled.
+  assert.equal(wiped.status, 'SKIPPED');
+  assert.equal(wiped.target_type, 'third_party_emulator');
+  assert.match(wiped.details, /Üçüncü taraf Android emülatörü/);
+  assert.match(wiped.details, /AVD wipe uygulanmaz/);
+
+  // A caller that already classified the target does not pay for it twice.
+  const preclassified = await wipeAvdAfterTest({
+    adb, device: 'emulator-5554', workspace: sdk,
+    target: { type: 'physical_device', label: 'Fiziksel Android cihaz', supports_avd_wipe: false },
+    run: async () => { throw new Error('yeniden sınıflandırılmamalıydı'); },
+    launch: async () => { throw new Error('wipe edilmemeliydi'); },
+  });
+  assert.equal(preclassified.status, 'SKIPPED');
+  assert.equal(preclassified.target_type, 'physical_device');
 });

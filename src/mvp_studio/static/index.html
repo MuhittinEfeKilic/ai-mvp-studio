@@ -613,7 +613,14 @@
           </div>
           <div class="card">
             <h3>Cihaz kapısı <span class="right">${device ? esc(device.status) : '—'}</span></h3>
-            ${device ? `<table>${Object.entries(device.checks || {}).map(([name, check]) => checkRow(name, check)).join('')}</table>
+            ${device ? `${device.target ? `<div class="card-body dim" style="font-size:12px">Hedef:
+                ${esc(device.target.label || device.target.type)}${device.target.model
+                  ? ` · ${esc([device.target.manufacturer, device.target.model].filter(Boolean).join(' '))}` : ''}</div>` : ''}
+              <table>${Object.entries(device.checks || {}).map(([name, check]) => checkRow(name, check)).join('')}</table>
+              ${device.housekeeping ? `<table class="housekeeping">${Object.entries(device.housekeeping)
+                .map(([name, check]) => checkRow(`${name} (temizlik)`, check)).join('')}</table>` : ''}
+              ${(device.notes || []).length ? `<div class="notice warn section-gap"><strong>Test sonrası uyarı:</strong>
+                <pre class="log">${esc(device.notes.join('\n'))}</pre></div>` : ''}
               ${device.reason ? `<div class="notice ${device.status === 'WAITING' ? 'warn' : 'err'} section-gap"><strong>Cihaz testi durdu:</strong> ${esc(device.reason)}</div>` : ''}`
               : '<div class="card-body dim">Henüz cihaz koşusu yok.</div>'}
           </div>

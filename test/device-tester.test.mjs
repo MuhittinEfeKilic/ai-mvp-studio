@@ -264,3 +264,110 @@ test('a missing critical-flow contract is not worth a repair round', () => {
     checks: { flow_coverage: { status: 'PASS' }, integration_test: { status: 'FAIL' } },
   }), true);
 });
+
+test('a cleanup failure never downgrades an otherwise passing device verdict', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-cleanup-'));
+  fs.mkdirSync(path.join(workspace, 'integration_test'));
+  fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
+  const apk = path.join(workspace, 'app.apk');
+  fs.writeFileSync(apk, 'delivery');
+  const report = await runAndroidDeviceGate({
+    workspace, apkPath: apk, packageName: 'com.example.app', flows: [{}],
+    flutterExecutable: 'flutter', adbExecutable: 'adb',
+    // The measured failure: the emulator console refuses the connection after
+    // every critical flow has already passed.
+    wipeDevice: async () => ({
+      status: 'FAIL', details: 'Test AVD adı okunamadı; otomatik wipe yapılamadı.',
+      log: 'could not connect to TCP port 5554',
+    }),
+    run: (command, args) => {
+      if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
+      if (args.includes('pidof')) return { status: 0, stdout: '1234\n' };
+      if (args.includes('logcat') && args.includes('-d')) return { status: 0, stdout: 'Application started' };
+      return { status: 0, stdout: command === 'flutter' ? events('integration_test/main_test.dart') : 'Success' };
+    },
+  });
+  assert.equal(report.status, 'PASS');
+  assert.equal(report.failure_kind, undefined);
+  assert.equal(report.reason, undefined);
+  // Housekeeping stays fully visible: a host that can no longer reset its AVD
+  // is a real problem, just not a defect of the generated application.
+  assert.equal(report.housekeeping.avd_wipe.status, 'FAIL');
+  assert.equal(report.housekeeping.app_cleanup.status, 'PASS');
+  assert.match(report.notes.join('\n'), /AVD temizliği/);
+  assert.equal('avd_wipe' in report.checks, false);
+});
+
+test('a stale delivery APK backup from an interrupted run is reclaimed', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-stale-backup-'));
+  fs.mkdirSync(path.join(workspace, 'integration_test'));
+  fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
+  const apk = path.join(workspace, 'app.apk');
+  // A Studio restart during the previous device gate: the file at apkPath is the
+  // instrumented test build and the delivery APK survives only in the backup.
+  fs.writeFileSync(apk, 'stale-test-apk');
+  fs.writeFileSync(`${apk}.studio-backup`, 'delivery');
+  const report = await runAndroidDeviceGate({
+    workspace, apkPath: apk, packageName: 'com.example.app', flows: [{}],
+    flutterExecutable: 'flutter', adbExecutable: 'adb', wipeDevice: successfulWipe,
+    run: (command, args) => {
+      if (command === 'flutter') fs.writeFileSync(apk, 'test-apk');
+      if (args.includes('install')) assert.equal(fs.readFileSync(apk, 'utf8'), 'delivery');
+      if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
+      if (args.includes('pidof')) return { status: 0, stdout: '1234\n' };
+      if (args.includes('logcat') && args.includes('-d')) return { status: 0, stdout: 'Application started' };
+      return { status: 0, stdout: command === 'flutter' ? events('integration_test/main_test.dart') : 'Success' };
+    },
+  });
+  assert.equal(report.status, 'PASS');
+  assert.equal(report.recovered_apk_backup.restored_delivery_apk, true);
+  assert.match(report.notes.join('\n'), /yedeği geri yüklendi/);
+  assert.equal(fs.readFileSync(apk, 'utf8'), 'delivery');
+  assert.equal(fs.existsSync(`${apk}.studio-backup`), false);
+});
+
+test('the device report names the Android runtime the product was validated on', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-target-'));
+  fs.mkdirSync(path.join(workspace, 'integration_test'));
+  fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
+  const apk = path.join(workspace, 'app.apk');
+  fs.writeFileSync(apk, 'delivery');
+  let wipeTarget = null;
+  const report = await runAndroidDeviceGate({
+    workspace, apkPath: apk, packageName: 'com.example.app', flows: [{}],
+    flutterExecutable: 'flutter', adbExecutable: 'adb',
+    // A third-party emulator: a supported target, but not an AVD.
+    detectTarget: async () => ({
+      type: 'third_party_emulator', label: 'Üçüncü taraf Android emülatörü',
+      device: 'emulator-5554', hardware: 'qcom', model: 'V2266A', manufacturer: 'vivo',
+      android_release: '9', supports_avd_wipe: false,
+    }),
+    wipeDevice: async options => {
+      wipeTarget = options.target;
+      return { status: 'SKIPPED', target_type: options.target.type, details: 'AVD wipe uygulanmaz.', log: '' };
+    },
+    run: (command, args) => {
+      if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
+      if (args.includes('pidof')) return { status: 0, stdout: '1234\n' };
+      if (args.includes('logcat') && args.includes('-d')) return { status: 0, stdout: 'Application started' };
+      return { status: 0, stdout: command === 'flutter' ? events('integration_test/main_test.dart') : 'Success' };
+    },
+  });
+  assert.equal(report.status, 'PASS');
+  // The report says what it ran on instead of calling everything an AVD.
+  assert.equal(report.target.type, 'third_party_emulator');
+  assert.equal(report.target.supports_avd_wipe, false);
+  assert.match(report.logs.device_target, /Üçüncü taraf Android emülatörü/);
+  // The classification is made once and handed to the target-specific operation.
+  assert.equal(wipeTarget.type, 'third_party_emulator');
+  assert.equal(report.housekeeping.avd_wipe.status, 'SKIPPED');
+  assert.equal(report.housekeeping.avd_wipe.target_type, 'third_party_emulator');
+  // A skipped target-specific step is not a warning.
+  assert.equal(report.notes, undefined);
+});

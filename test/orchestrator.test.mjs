@@ -946,3 +946,83 @@ test('a runaway pipeline stops at the token budget instead of spending on', asyn
   assert.ok(database.sumProjectTokens(project.id).billable > spentBefore, 'resume yeni bütçe açmadı');
   database.close();
 });
+
+test('a reviewer that breaks the output contract is asked once more instead of failing the run', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-review-contract-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  const reviewPrompts = [];
+
+  class MalformedReviewer extends FakeRunner {
+    async run(options) {
+      if (!/Review the complete|response JSON only/i.test(options.prompt)) return super.run(options);
+      reviewPrompts.push(options.prompt);
+      options.onEvent('turn.completed', { type: 'turn.completed' });
+      // The first answer is prose, which the verdict contract cannot parse.
+      return reviewPrompts.length === 1
+        ? 'Uygulamayı inceledim, kabul kriterlerinin tamamı karşılanmış görünüyor.'
+        : fakeReview(options.workspace);
+    }
+  }
+
+  const orchestrator = new Orchestrator({
+    database,
+    runner: new MalformedReviewer(),
+    projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1,
+    flutterChecker: workspace => ({ checks: {
+      analyze: { status: 'PASS', exit_code: 0 }, test: { status: 'PASS', exit_code: 0 },
+      apk: { status: 'PASS', exit_code: 0, path: createFakeApk(workspace) },
+    } }),
+  });
+  const spec = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'odak-mini', 'PROJECT_SPEC.md',
+  ), 'utf8');
+  const project = orchestrator.createProject('Odak Mini', spec);
+  const completed = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+
+  assert.equal(completed.status, 'awaiting_user_review', completed.error);
+  assert.equal(reviewPrompts.length, 2, 'sözleşmeyi bozan inceleme yeniden istenmedi');
+  // The correction names the concrete parsing failure, like the task plan retry.
+  assert.match(reviewPrompts[1], /Your previous response was rejected/);
+  assert.match(reviewPrompts[1], /JSON veya tek satırlık PASS\/FAIL/);
+  assert.equal(database.getTask(`${project.id}:reviewer`).status, 'completed');
+  assert.ok(database.listEvents(project.id).some(event => event.event_type === 'reviewer.contract_rejected'));
+  database.close();
+});
+
+test('a reviewer that breaks the contract twice fails the project without looping', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-review-contract-stuck-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  let reviews = 0;
+
+  class AlwaysMalformedReviewer extends FakeRunner {
+    async run(options) {
+      if (!/Review the complete|response JSON only/i.test(options.prompt)) return super.run(options);
+      reviews += 1;
+      options.onEvent('turn.completed', { type: 'turn.completed' });
+      return 'Kabul kriterleri hakkında net bir yargıya varamadım.';
+    }
+  }
+
+  const orchestrator = new Orchestrator({
+    database,
+    runner: new AlwaysMalformedReviewer(),
+    projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1,
+    flutterChecker: workspace => ({ checks: {
+      analyze: { status: 'PASS', exit_code: 0 }, test: { status: 'PASS', exit_code: 0 },
+      apk: { status: 'PASS', exit_code: 0, path: createFakeApk(workspace) },
+    } }),
+  });
+  const spec = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'odak-mini', 'PROJECT_SPEC.md',
+  ), 'utf8');
+  const project = orchestrator.createProject('Odak Mini', spec);
+  const finished = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+
+  assert.equal(finished.status, 'failed');
+  // Exactly one extra turn: a bounded correction, never a retry loop.
+  assert.equal(reviews, 2);
+  assert.match(finished.error, /JSON veya tek satırlık PASS\/FAIL/);
+  database.close();
+});

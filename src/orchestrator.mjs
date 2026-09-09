@@ -20,6 +20,14 @@ import { parseEmulatorList, probeBuildTools } from './android-environment.mjs';
 import { runSourceDiagnostics } from './source-diagnostics.mjs';
 import { parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec } from './spec-validator.mjs';
 
+/**
+ * Deliberately synchronous. Unlike the Flutter/Android toolchain these are local
+ * repository operations on a small worktree — commit, status, merge, rev-parse —
+ * bounded in milliseconds with no network and no daemon to hang on. Making them
+ * async would spread `await` through the checkpoint and merge sequences and open
+ * interleaving windows in code whose correctness depends on running to
+ * completion between two agent turns, buying nothing measurable in return.
+ */
 function git(workspace, args, options = {}) {
   const result = spawnSync('git', args, {
     cwd: workspace,
@@ -61,15 +69,16 @@ function flutterInvocation(executable, args) {
     : { command: executable, args };
 }
 
-function runFlutter(executable, args, workspace) {
-  const invocation = flutterInvocation(executable, args);
-  return spawnSync(invocation.command, invocation.args, {
-    cwd: workspace, encoding: 'utf8', windowsHide: true, timeout: 600_000,
-  });
-}
+export const DEFAULT_FLUTTER_TIMEOUT_MS = 600_000;
 
-/** Non-blocking variant, so a slow Gradle build can overlap the planning agents. */
-export function runFlutterAsync(executable, args, workspace, timeoutMs = 600_000) {
+/**
+ * Every Flutter/Gradle/Android command goes through here. There is no
+ * synchronous variant on purpose: `flutter pub get` on a cold cache and
+ * `flutter create` take tens of seconds, and spawnSync would hold Node's event
+ * loop for all of it — freezing the panel, the HTTP API and every other
+ * project's agents along with it.
+ */
+export function runFlutterAsync(executable, args, workspace, timeoutMs = DEFAULT_FLUTTER_TIMEOUT_MS) {
   const invocation = flutterInvocation(executable, args);
   return runProcess(invocation.command, invocation.args, {
     cwd: workspace,
@@ -91,25 +100,25 @@ export function scaffoldIdentity(metadata = {}) {
 }
 
 // Probing costs a real `flutter --version` spawn (~2s) and the answer cannot
-// change while the Studio is running, so it is resolved once per process.
-let cachedFlutter;
+// change while the Studio is running, so it is resolved once per process. The
+// in-flight promise is what gets cached, not just its result: several projects
+// enter planning at the same moment and would otherwise each pay for the probe.
+let flutterProbe;
 
-function resolveFlutter(workspace) {
-  if (cachedFlutter !== undefined) return cachedFlutter;
-  cachedFlutter = null;
-  for (const candidate of flutterCandidates()) {
-    const result = runFlutter(candidate, ['--version'], workspace);
-    if (result.status === 0) {
-      cachedFlutter = candidate;
-      break;
+function resolveFlutter(workspace, timeoutMs = DEFAULT_FLUTTER_TIMEOUT_MS) {
+  flutterProbe ??= (async () => {
+    for (const candidate of flutterCandidates()) {
+      const result = await runFlutterAsync(candidate, ['--version'], workspace, timeoutMs);
+      if (result.status === 0) return candidate;
     }
-  }
-  return cachedFlutter;
+    return null;
+  })();
+  return flutterProbe;
 }
 
 /** Test seam: clears the memoised toolchain lookup. */
 export function resetToolchainCache() {
-  cachedFlutter = undefined;
+  flutterProbe = undefined;
 }
 
 function commandDetails(result) {
@@ -761,16 +770,17 @@ export class Orchestrator {
    * that everything else depended on, which put ~430s of boilerplate agent work
    * on the critical path. `flutter create` produces the same files in seconds.
    */
-  #scaffoldApplication(projectId, workspace) {
+  async #scaffoldApplication(projectId, workspace) {
     if (fs.existsSync(path.join(workspace, 'pubspec.yaml'))) return false;
-    const flutter = resolveFlutter(workspace);
+    const flutter = await resolveFlutter(workspace, this.flutterTimeoutMs);
     if (!flutter) return false;
     const { metadata } = parseSpec(this.database.getProject(projectId).prompt);
     const { name, org } = scaffoldIdentity(metadata);
-    const result = runFlutter(
+    const result = await runFlutterAsync(
       flutter,
       ['create', '--project-name', name, '--org', org, '--platforms', 'android', '.'],
       workspace,
+      this.flutterTimeoutMs,
     );
     if (result.status !== 0) {
       throw new Error(`flutter create başarısız: ${commandDetails(result)}`);
@@ -792,7 +802,7 @@ export class Orchestrator {
       '',
     ].join('\n'), 'utf8');
     fs.rmSync(path.join(workspace, 'test', 'widget_test.dart'), { force: true });
-    const dependencies = runFlutter(flutter, ['pub', 'get'], workspace);
+    const dependencies = await runFlutterAsync(flutter, ['pub', 'get'], workspace, this.flutterTimeoutMs);
     if (dependencies.status !== 0) {
       throw new Error(`flutter pub get başarısız: ${commandDetails(dependencies)}`);
     }
@@ -809,13 +819,15 @@ export class Orchestrator {
    * pub.dev pulls an unrelated pre null-safety package, so it is installed here
    * from the SDK. Idempotent: projects scaffolded earlier get it on resume.
    */
-  #ensureIntegrationTestDependency(workspace) {
+  async #ensureIntegrationTestDependency(workspace) {
     const pubspec = path.join(workspace, 'pubspec.yaml');
     if (!fs.existsSync(pubspec)) return false;
     if (/^\s*integration_test\s*:/m.test(fs.readFileSync(pubspec, 'utf8'))) return false;
-    const flutter = resolveFlutter(workspace);
+    const flutter = await resolveFlutter(workspace, this.flutterTimeoutMs);
     if (!flutter) return false;
-    const result = runFlutter(flutter, ['pub', 'add', 'dev:integration_test', '--sdk=flutter'], workspace);
+    const result = await runFlutterAsync(
+      flutter, ['pub', 'add', 'dev:integration_test', '--sdk=flutter'], workspace, this.flutterTimeoutMs,
+    );
     if (result.status !== 0) {
       throw new Error(`integration_test bağımlılığı kurulamadı: ${commandDetails(result)}`);
     }
@@ -830,9 +842,10 @@ export class Orchestrator {
    * Architecture/UX/Coordinator window removes it from the critical path.
    * Best effort: a failure here must never fail the project.
    */
-  #startWarmBuild(projectId, workspace) {
-    const flutter = resolveFlutter(workspace);
-    if (!flutter || !fs.existsSync(path.join(workspace, 'pubspec.yaml'))) return null;
+  async #startWarmBuild(projectId, workspace) {
+    if (!fs.existsSync(path.join(workspace, 'pubspec.yaml'))) return null;
+    const flutter = await resolveFlutter(workspace, this.flutterTimeoutMs);
+    if (!flutter) return null;
     const startedAt = Date.now();
     return runFlutterAsync(flutter, ['build', 'apk', '--debug'], workspace, this.flutterTimeoutMs).then(result => {
       this.database.addEvent(projectId, 'warm_build.completed', {
@@ -851,12 +864,12 @@ export class Orchestrator {
    * out of every builder's allowed_paths, which is the shared file that forced
    * feature tasks to run one after another.
    */
-  #installPlanDependencies(projectId, workspace, dependencies) {
+  async #installPlanDependencies(projectId, workspace, dependencies) {
     const packages = normalizePackageDependencies(dependencies);
     if (!packages.length) return;
-    const flutter = resolveFlutter(workspace);
+    const flutter = await resolveFlutter(workspace, this.flutterTimeoutMs);
     if (!flutter) return;
-    const result = runFlutter(flutter, ['pub', 'add', ...packages], workspace);
+    const result = await runFlutterAsync(flutter, ['pub', 'add', ...packages], workspace, this.flutterTimeoutMs);
     this.database.addEvent(projectId, 'dependencies.installed', {
       packages, status: result.status === 0 ? 'PASS' : 'FAIL',
     });
@@ -868,7 +881,7 @@ export class Orchestrator {
   }
 
   async #runFlutterPreflight(projectId, workspace) {
-    const flutter = resolveFlutter(workspace);
+    const flutter = await resolveFlutter(workspace, this.flutterTimeoutMs);
     const androidSdk = [
       process.env.ANDROID_HOME,
       process.env.ANDROID_SDK_ROOT,
@@ -881,15 +894,19 @@ export class Orchestrator {
       android_sdk: { status: androidSdk ? 'PASS' : 'FAIL', path: androidSdk || null },
     };
     if (flutter) {
-      const version = runFlutter(flutter, ['--version'], workspace);
+      const version = await runFlutterAsync(flutter, ['--version'], workspace, this.flutterTimeoutMs);
       report.flutter.version = fullCommandOutput(version).split(/\r?\n/)[0] || null;
       report.flutter.status = version.status === 0 ? 'PASS' : 'FAIL';
       report.flutter.details = commandDetails(version);
-      report.emulators = parseEmulatorList(fullCommandOutput(runFlutter(flutter, ['emulators'], workspace)));
+      report.emulators = parseEmulatorList(fullCommandOutput(
+        await runFlutterAsync(flutter, ['emulators'], workspace, this.flutterTimeoutMs),
+      ));
     }
     report.build_tools = await probeBuildTools({
       sdkRoot: androidSdk,
-      run: async (executable, args) => runFlutter(executable, args, workspace),
+      // `aapt version` is an external binary like any other: a crashing or hung
+      // build-tools probe must not hold the event loop either.
+      run: (executable, args) => runFlutterAsync(executable, args, workspace, this.flutterTimeoutMs),
     });
     report.status = report.flutter.status === 'PASS' && report.android_sdk.status === 'PASS'
       && report.build_tools.status !== 'FAIL'
@@ -922,7 +939,7 @@ export class Orchestrator {
       apk: { status: 'SKIPPED', details, path: null },
     } });
     if (!fs.existsSync(path.join(workspace, 'pubspec.yaml'))) return skipped('pubspec.yaml yok.');
-    const flutter = resolveFlutter(workspace);
+    const flutter = await resolveFlutter(workspace, this.flutterTimeoutMs);
     if (!flutter) return skipped('Flutter SDK bulunamadı. FLUTTER_BIN veya PATH ayarını kontrol edin.');
     const checks = {};
     const logs = {};
@@ -1000,7 +1017,8 @@ export class Orchestrator {
       ? await this.deviceTester({ workspace, apkPath, packageName, flows })
       : await runAndroidDeviceGate({
         workspace, apkPath, packageName, flows,
-        flutterExecutable: resolveFlutter(workspace), adbExecutable: await resolveAdb(),
+        flutterExecutable: await resolveFlutter(workspace, this.flutterTimeoutMs),
+        adbExecutable: await resolveAdb(),
         minimumFreeMb: this.deviceMinFreeMb,
       });
     writeDeviceReport(workspace, report);
@@ -1062,9 +1080,8 @@ export class Orchestrator {
     let qualityReport = initialQualityReport;
     let previousSignature = null;
     for (let round = 0; ; round += 1) {
-      // The gate itself is spawnSync-based and blocks the event loop for minutes.
       // Yielding first lets a concurrently started agent reach its own spawn, so
-      // the work really overlaps instead of queueing behind this call.
+      // the device run really overlaps instead of queueing behind this call.
       await new Promise(resolve => { setImmediate(resolve); });
       const deviceReport = await this.#runDeviceGate(projectId, workspace, qualityReport);
       if (deviceReport.status === 'PASS') return { qualityReport, repairRounds: round };
@@ -1155,8 +1172,9 @@ export class Orchestrator {
       // reproduce the false negatives that contract was written to prevent.
       const review = await this.#startReviewer(id, workspace);
       if (review.error) throw review.error;
-      const reviewerMessage = review.message;
-      const reviewerResult = parseReviewerResult(reviewerMessage, this.#reviewOptions(workspace));
+      const settled = await this.#settleReviewVerdict(id, workspace, review.message);
+      const reviewerMessage = settled.message;
+      const reviewerResult = settled.verdict;
       if (reviewerResult.status !== 'PASS') {
         const reasons = reviewerResult.issues.map(issue => `- ${issue}`).join('\n')
           || reviewerResult.summary || 'Gerekçe bildirilmedi.';
@@ -1237,8 +1255,30 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Parses a reviewer verdict and, when the output breaks the contract, asks the
+   * reviewer once more with the concrete reason — the same correction the
+   * Coordinator gets for a rejected TASK_PLAN.json. A malformed answer is a
+   * formatting failure of the last agent in the pipeline; failing the project on
+   * it threw away a run that had already cleared every gate. Bounded to one
+   * extra turn: a reviewer that cannot answer the shape twice is a real failure.
+   */
+  async #settleReviewVerdict(projectId, workspace, message) {
+    const options = this.#reviewOptions(workspace);
+    try {
+      return { message, verdict: parseReviewerResult(message, options) };
+    } catch (error) {
+      if (error?.code !== 'INVALID_REVIEWER_RESULT') throw error;
+      this.database.addEvent(projectId, 'reviewer.contract_rejected', { error: error.message });
+      this.database.updateTask(taskId(projectId, 'reviewer'), { status: 'pending', error: null });
+      const retry = await this.#startReviewer(projectId, workspace, { contractError: error.message });
+      if (retry.error) throw retry.error;
+      return { message: retry.message, verdict: parseReviewerResult(retry.message, options) };
+    }
+  }
+
   /** Starts the read-only review; the caller decides when to settle it. */
-  #startReviewer(projectId, workspace) {
+  #startReviewer(projectId, workspace, { contractError = null } = {}) {
     const criteria = this.#acceptanceCriteria(workspace);
     const checklist = criteria.length
       ? `\n\nPROJECT_SPEC.md kabul kriterleri, senin yanıtlaman gereken liste budur:\n${
@@ -1251,9 +1291,14 @@ export class Orchestrator {
         previous.map(issue => `- ${issue}`).join('\n')
       }`
       : '';
+    // Only the output contract was rejected, so the review itself is redone with
+    // the same instructions plus the concrete parsing failure.
+    const correction = contractError
+      ? `\n\nYour previous response was rejected because it broke the output contract: ${contractError} Return the corrected verdict for the same review. Emit the JSON object and nothing else: no prose before or after it, no markdown fence, exactly the required keys.`
+      : '';
     return this.#runAgent({
       projectId, taskKey: 'reviewer', agentName: 'Mobile Reviewer Agent', role: 'reviewer', workspace,
-      prompt: `Review the complete Flutter mobile MVP against PROJECT_SPEC.md and USER_FLOWS.json without modifying files.${checklist}${history}
+      prompt: `Review the complete Flutter mobile MVP against PROJECT_SPEC.md and USER_FLOWS.json without modifying files.${checklist}${history}${correction}
 
 Authoritative gates already ran and you must not re-judge them: TEST_REPORT.json owns flutter analyze, flutter test, the debug APK build and the swallowed-error scan; DEVICE_REPORT.json owns execution on the Android device. A PASS in those reports is proof. An Android emulator satisfies the device_test requirement; do not ask for physical hardware. If DEVICE_REPORT.json is absent the device gate simply has not run yet, which is never your finding to report.
 
@@ -1288,8 +1333,10 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         await this.#runFlutterPreflight(id, workspace);
         // Scaffold before the worktrees branch, so every agent starts from the
         // same committed skeleton, then hide the cold Gradle build behind them.
-        this.#scaffoldApplication(id, workspace);
-        this.#ensureIntegrationTestDependency(workspace);
+        await this.#scaffoldApplication(id, workspace);
+        await this.#ensureIntegrationTestDependency(workspace);
+        // Deliberately not awaited: the cold Gradle build overlaps the planning
+        // agents, which is what keeps it off the critical path.
         warmBuild = this.#startWarmBuild(id, workspace);
       }
       const planningAgents = [
@@ -1345,7 +1392,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
       // The warm build owns .dart_tool; let it finish before pub touches it.
       if (warmBuild) await warmBuild;
       if (fs.existsSync(path.join(workspace, 'TASK_PLAN.json'))) {
-        this.#installPlanDependencies(
+        await this.#installPlanDependencies(
           id, workspace,
           JSON.parse(fs.readFileSync(path.join(workspace, 'TASK_PLAN.json'), 'utf8')).dependencies,
         );
@@ -1423,6 +1470,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
       // installs and exercises the APK. Any device repair writes to the same
       // workspace, so the review is settled first and then redone.
       let reviewerMessage = this.#completedTaskMessage(id, 'reviewer');
+      let reviewerVerdict = null;
       let pendingReview = null;
       if (!reviewerMessage) {
         this.#readyTasks(id, ['reviewer'], 1);
@@ -1465,12 +1513,14 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         for (let round = 0; ; round += 1) {
           review = (await settleReview()) ?? review ?? await this.#startReviewer(id, workspace);
           if (review.error) throw review.error;
-          reviewerMessage = review.message;
+          const settled = await this.#settleReviewVerdict(id, workspace, review.message);
+          reviewerMessage = settled.message;
+          reviewerVerdict = settled.verdict;
           review = null;
           git(workspace, ['add', '-A']);
           if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: record review state']);
 
-          const verdict = parseReviewerResult(reviewerMessage, this.#reviewOptions(workspace));
+          const verdict = reviewerVerdict;
           if (verdict.status === 'PASS') break;
 
           const findings = verdict.issues.map(issue => `- ${issue}`).join('\n');
@@ -1516,7 +1566,10 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         }
         this.#completeTask(id, 'reviewer', workspace, reviewerMessage);
       }
-      const reviewerResult = parseReviewerResult(reviewerMessage, this.#reviewOptions(workspace));
+      // A resumed run reuses a stored verdict, which was validated before it was
+      // stored; the loop above already parsed everything else.
+      const reviewerResult = reviewerVerdict
+        ?? (await this.#settleReviewVerdict(id, workspace, reviewerMessage)).verdict;
 
       this.database.updateProject(id, {
         status: 'awaiting_user_review', final_message: reviewerResult.summary || reviewerMessage,

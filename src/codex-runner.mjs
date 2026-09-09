@@ -123,17 +123,28 @@ export class CodexRunner {
         stderr += text;
         onEvent('stderr', { text: text.trim() });
       });
+      // Codex exiting before the whole prompt is written breaks the pipe, and an
+      // unhandled 'error' on the stdin stream would take the Studio process down
+      // with every other running project. It is recorded and left to the exit
+      // code, which reports why Codex stopped in the first place.
+      let stdinError = null;
+      child.stdin.once('error', error => {
+        stdinError = error;
+        onEvent('stderr', { text: `stdin: ${error.message}` });
+      });
       child.stdin.end(prompt);
       child.once('error', fail);
       child.once('close', code => {
         settle(() => {
           consumeLine(buffer);
+          const details = [stderr.trim(), stdinError && `prompt yazılamadı: ${stdinError.message}`]
+            .filter(Boolean).join('\n');
           if (timedOut) {
             reject(new Error(`Codex ${formatDuration(this.timeoutMs)} içinde tamamlanmadı ve süreç sonlandırıldı.`));
-          } else if (code === 0) {
+          } else if (code === 0 && !stdinError) {
             resolve(finalMessage || 'Codex çalışması tamamlandı.');
           } else {
-            reject(new Error(stderr.trim() || `Codex ${code} çıkış koduyla sonlandı.`));
+            reject(new Error(details || `Codex ${code} çıkış koduyla sonlandı.`));
           }
         });
       });

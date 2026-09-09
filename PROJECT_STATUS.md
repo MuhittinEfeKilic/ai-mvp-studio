@@ -2,14 +2,45 @@
 
 Son güncelleme: 9 Eylül 2026
 
-### Son cihaz ortamı kararı
+## Nerede duruyoruz
 
-- Otomatik test hedefi Android Studio AVD'dir; LDPlayer'a özel ADB yolu ve
-  entegrasyon kaldırılmıştır.
-- Cihaz kapısı integration testten önce hedef paketi kaldırır ve AVD `/data` boş
+Studio kişisel bir startup/MVP fabrikasıdır; hedef döngü **fikir → çalışan MVP →
+yayınlanabilir MVP → gerçek kullanıcı → ölçülebilir geri bildirim → KILL / ITERATE /
+SCALE**. Amacı ve optimize ettiği şeyler [README](README.md) başında anlatılır.
+
+Bugün uygulanmış olan kısım döngünün **sol tarafıdır: fikir → doğrulanmış MVP.**
+Hat, onaylanmış bir spec'ten kalite ve cihaz kapılarını geçmiş, incelenmiş bir debug
+APK üretir. Sağ taraf — yayınlanabilir artefakt, gerçek kullanıcı, ölçüm — henüz
+yazılmadı ve bu dosyada var gibi anlatılmamalıdır.
+
+### Cihaz hedefi politikası
+
+Cihaz doğrulaması **desteklenen bir Android çalışma zamanına** karşı yapılır, tek
+bir emülatör türüne değil. Üç hedef kategorisi desteklenir:
+
+| Kategori | `type` | AVD wipe |
+| --- | --- | --- |
+| Android Studio AVD | `android_studio_avd` | uygulanır |
+| Üçüncü taraf Android emülatörü | `third_party_emulator` | uygulanmaz |
+| Fiziksel Android cihaz | `physical_device` | uygulanmaz |
+
+- Hedef, cihaz edinildikten hemen sonra `detectDeviceTarget` ile sınıflandırılır ve
+  `DEVICE_REPORT.json` içinde `target` alanında (tür, üretici, model, `ro.hardware`,
+  Android sürümü) raporlanır; panelde cihaz kapısı kartının üstünde görünür.
+- **`emulator-NNNN` kimliği AVD kanıtı değildir.** Üçüncü taraf emülatörler de bu
+  kimliği alır, AVD konsol komutlarına yanıt vermez ve gerçek cihaz profili taklit
+  eder. Sınıflandırma `ro.hardware` (goldfish/ranchu) ve qemu boot özellikleriyle
+  yapılır. Hiçbir hedef olmadığı şeymiş gibi etiketlenmez.
+- **AVD'ye özgü işlemler yalnız AVD hedefinde çalışır.** Bugün bu yalnız wipe'tır;
+  diğer hedeflerde `SKIPPED`, gerekçesiyle birlikte. Yapılacak bir şey olmaması
+  arıza değildir.
+- Cihaz kapısı integration testten önce hedef paketi kaldırır ve `/data` boş
   alanını kontrol eder. Varsayılan eşik 1536 MB'dir.
 - Yetersiz alan ürün hatası değildir; gerçek boş/gerekli alanla birlikte
   `awaiting_device_test` durumuna geçer. Başka uygulama verileri otomatik silinmez.
+- **Test sonrası temizlik kapı değildir.** Hedef paket kaldırma ve AVD wipe,
+  ürün kararı verildikten sonra çalışır; sonuçları `housekeeping` altında ve
+  `notes` uyarısı olarak raporlanır, fakat geçmiş bir koşuyu WAITING'e düşüremez.
 
 Bu dosya sistemin **bugünkü hâlini** anlatır: hangi sözleşmeler bağlayıcıdır, hangi
 kararlar bilinçli olarak verilmiştir, hangi ölçümler gerçek koşulardan gelir ve
@@ -25,15 +56,19 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **104/104 test**. Tam paket Windows üzerinde
-  takılmadan tamamlandı; ilk builder dalgası ve Flutter tooling manifesti
-  regresyonlarının yanında ADB alt komut timeout'u da geçti.
+- Studio regresyonu: **121/121 test**, arka arkaya on tam koşuda sıfır
+  başarısızlık. Cihaz temizliği ayrımı, cihaz hedefi sınıflandırması, AVD adı
+  fallback'i, reviewer sözleşme düzeltmesi, Codex stdin arızası, bayat APK yedeği
+  kurtarması, deterministik process timeout'u ve event loop canlılığı kapsanır.
+- **Hiçbir toolchain komutu event loop'u bloke etmez.** Flutter, Gradle, adb ve
+  aapt çağrılarının tamamı `async-process-runner` üzerinden çalışır; orchestrator
+  içinde senkron kalan tek şey yerel Git plumbing'idir.
 
 ### Projeler
 
 | Kimlik | Ad | Durum | Ne kanıtlıyor |
 | --- | --- | --- | --- |
-| `1d95246c0382` | Akış Cep | `awaiting_device_test` | Final kodda 47/47 kalite testi, 6/6 emülatör akışı ve yenilenmiş reviewer PASS. Ürün akışları geçti; yalnız test sonrası AVD adı okunamadığı için ortam temizleme retry'ı bekliyor |
+| `1d95246c0382` | Akış Cep | `awaiting_device_test` | Final kodda 47/47 kalite testi, 6/6 emülatör akışı ve yenilenmiş reviewer PASS. Kayıt, temizliğin kapı olduğu dönemde oluştu; **veritabanı durumu bilerek değiştirilmedi**. Aynı koşu güncel semantikte PASS üretir (aşağıya bakın) |
 | `7b6df59adcb9` | Ders Notu (2. koşu) | `awaiting_user_review` | Yeni sözleşmelerin ilk gerçek doğrulaması; tek incelemede temiz geçti |
 | `c67140223074` | Ders Notu (1. koşu) | `awaiting_user_review` | İlk tam uçtan uca başarı; cihaz kapısı PASS; feedback turu gerçek kusuru düzeltti |
 | `f87128fb48bf` | Bakım Takvimi | `interrupted` | Beş cihaz akışından dördü tamamlandıktan sonra Studio yeniden başlatıldığı için checkpoint'te durdu; son ölçümde 4973 MB boş alan vardı |
@@ -97,6 +132,10 @@ Reviewer çıktısı şu şekli almak zorundadır ve `validateReviewerResult` do
 - Doğrulanamayan gözlemler `notes` alanına gider ve durumu değiştirmez.
 - Bulgular hem düz metin hem `{file, description}` nesnesi olabilir;
   `normalizeReviewerFindings` ikisini de okunabilir metne çevirir.
+- **Sözleşmeyi bozan çıktı projeyi düşürmez.** `INVALID_REVIEWER_RESULT`
+  durumunda inceleme, somut ayrıştırma gerekçesiyle **bir kez** daha istenir —
+  reddedilen `TASK_PLAN.json` ile aynı ilke. İkinci çıktı da geçersizse proje
+  normal biçimde başarısız olur; döngü yoktur.
 
 Kriter dosyası olmayan eski projelerde `expectedCriteria` boş kalır ve doğrulama
 zarifçe eski davranışa döner.
@@ -107,13 +146,23 @@ Cihaz akışları tek geçici Dart girişinde grup olarak kaydedilir ve tek test
 kurulumuyla çalışır. Senaryo sonuçları JSON test olaylarından çıkarılır; skip veya
 eksik kanıt PASS değildir. Test başına 120 saniye, toplamda 180 saniye + dosya
 başına 120 saniye sınırı vardır. Teslim APK'sı test derlemesinden korunur ve normal
-açılış için bir kez kurulur. Sonunda hedef paket kaldırılır ve mevcut AVD temizliği
-uygulanır. Agent talimatları senaryo bazında kaynak/veri temizliği gerektirir.
+açılış için bir kez kurulur. Sonunda hedef paket kaldırılır ve uygunsa AVD
+temizliği uygulanır; bu iki adım `housekeeping` altında raporlanır ve karara
+karışmaz. Agent talimatları senaryo bazında kaynak/veri temizliği gerektirir.
+
+Teslim APK'sı `<apk>.studio-backup` dosyasına kopyalanır ve test derlemesinden
+sonra geri yüklenir. Studio bu iki adım arasında yeniden başlatılırsa yedek diskte
+kalır; sonraki koşu onu **geri yükleyip siler**, çünkü yedek tanımı gereği bozulmamış
+teslim APK'sıdır. Eskiden yedeğin üzerine yazmayı reddetmek o projedeki bütün
+sonraki cihaz koşularını kalıcı olarak bloke ediyordu.
 
 Gerçek Akış Cep toplu doğrulaması: 6 dosyada 7 senaryo PASS, teslim APK açılışı
-ve hedef paket kaldırma PASS; cihaz kapısı 58.5 saniye. Mevcut AVD adı sorgusu
-başarısız kaldığı için genel sonuç WAITING. Kanıt: `.tool_state/suite-live-report.json`.
-Bu bağımsız doğrulama Studio veritabanındaki önceki proje sonucunu değiştirmez.
+ve hedef paket kaldırma PASS; cihaz kapısı 58.5 saniye. Kanıt:
+`.tool_state/suite-live-report.json`. O koşu, temizliğin kapı sayıldığı dönemde
+AVD adı okunamadığı için WAITING kaydedilmişti; **kayıt olduğu gibi bırakıldı**.
+Aynı host bugün ölçüldüğünde `emulator-5554`'ün Android Studio AVD'si olmadığı
+görüldü (`ro.hardware=qcom`, konsol portu reddediyor, qemu özellikleri boş), bu
+yüzden temizlik artık `SKIPPED` ve aynı koşu **PASS** üretir.
 
 | Kapı | Sahibi olduğu şey | Onarım turu | Erken durma |
 | --- | --- | --- | --- |
@@ -148,8 +197,10 @@ Bunlar tartışıldı ve bilerek böyle bırakıldı. Değiştirmeden önce nede
   dönmek tükenmiş context penceresine dönmek olurdu. `thread_id` yine kaydedilir.
 - **Tanınmayan cihaz hatası `product` sayılır.** Aksi hâlde gerçek bir kusur
   sessizce bekleme durumuna park edilirdi.
-- **Emülatör `device_test` şartını karşılar.** Fiziksel donanım istemek her koşuyu
-  düşürürdü.
+- **Desteklenen her Android çalışma zamanı `device_test` şartını karşılar.**
+  Android Studio AVD'si, üçüncü taraf emülatör ve fiziksel cihaz eşit derecede
+  geçerli hedeftir; fiziksel donanım şartı koşmak her koşuyu düşürürdü. Hedefe
+  özgü işlemler (bugün yalnız AVD wipe) yalnız o hedefte çalışır.
 - **`UX_SPEC.md` rehberdir, sözleşme `PROJECT_SPEC.md`'dir.** UX agent'ı kabul
   listesine yalnız testle doğrulanabilir maddeleri koyar; ekran okuyucu, yazı
   ölçeği gibi manuel kontroller ayrı başlık altında öneridir.
@@ -168,6 +219,11 @@ Bunlar tartışıldı ve bilerek böyle bırakıldı. Değiştirmeden önce nede
 - **Teknik kapı ürün kabulü değildir.** Analyze/test/APK PASS, kritik akışların
   çalıştığını kanıtlamaz; cihaz kapısı bu yüzden hem ana hatta hem feedback
   turunda zorunludur.
+- **Kurtarılabilir altyapı arızası koşuyu yok etmez.** Test sonrası temizlik,
+  bozuk reviewer JSON'ı, kırılan Codex stdin pipe'ı ve yarım kalmış APK yedeği
+  ürün kalitesi hakkında hiçbir şey söylemez; her biri ya uyarıya ya tek bir
+  düzeltme turuna ya da deterministik kurtarmaya bağlanır. Gerçek ürün kusurları
+  bu muameleyi görmez — onlar hâlâ kapıları bloklar.
 
 ## Ölçülmüş performans
 
@@ -203,9 +259,15 @@ Bu oturumda gerçekten zaman kaybettiren şeyler:
 2. **Teşhis için `agent_runs.context_manifest` sütununa bakın.** Bir agent'a hangi
    belgelerin gerçekten gittiğini gösterir; reviewer'ın cihaz kanıtını görmediğini
    bu sütun kanıtladı.
-3. **Uzun süreçlerde senkron çalıştırıcı kullanmayın.** Codex, Flutter kalite ve
-   cihaz komutları `async-process-runner.mjs` üzerinden asenkron çalışır; timeout
-   bütün süreç ağacını kapatır ve Windows `taskkill` için fallback uygular.
+3. **Harici süreçlerde senkron çalıştırıcı kullanmayın.** Codex, Flutter/Gradle,
+   adb ve aapt komutlarının **tamamı** `async-process-runner.mjs` üzerinden
+   çalışır; timeout bütün süreç ağacını kapatır ve Windows `taskkill` için
+   fallback uygular. Bir kez tetiklenen timeout sonucu kesindir: süreç
+   sonlandırma sırasında gelen `close`/`error` olayları sonucu değiştirmez,
+   yalnız `exit_during_termination` alanına teşhis için yazılır. Yerel Git
+   plumbing'i (`spawnSync('git', …)`) bilinçli istisnadır — çevrimdışı ve
+   milisaniyelik; `pipeline-stability` içindeki bekçi testi başka bir senkron
+   toolchain çağrısı eklenmesini engeller.
 4. **Üretilen repository'lerde satır sonları karışıktır** (CRLF/LF). Bu dosyalara
    dokunan betikler satır sonundan bağımsız eşleşmelidir.
 5. **`markStaleRunsInterrupted` kapsamı** `IN_FLIGHT_PROJECT_STATUSES` listesidir.
@@ -232,28 +294,72 @@ Sekmeli, proje odaklı: **Genel · Agentlar · Pipeline · Etkinlik**.
   komut, dokunulan dosya sayısı; üstte toplam/meşgul süre ve örtüşme oranı, token
   bütçesi çubuğu, altında rol bazında süre ve token tablosu.
 - **Etkinlik** — Codex olay akışı komut/dosya/mesaj/kapı/stderr filtreleriyle.
-- **Genel** — kalite ve cihaz kapıları çek çek, kabul kriteri sonuçları, engelleyici
-  olmayan notlar, onay ve geri bildirim eylemleri.
+- **Genel** — kalite ve cihaz kapıları çek çek, cihaz temizliği ayrı bir tabloda
+  ve başarısızsa uyarı bloğunda, kabul kriteri sonuçları, engelleyici olmayan
+  notlar, onay ve geri bildirim eylemleri.
 
 Yoklama, görünen veri değişmedikçe yeniden çizim yapmaz; açık panel, taslak metin ve
 kaydırma konumu korunur. Olay uç noktası son 400 olayı döndürür.
 
 ## Açık kalan işler
 
-1. **Review Repair ve önceki bulgu hafızası hâlâ gerçek koşuda tetiklenmedi.**
+1. **`Akış Cep` yeniden koşulmadı.** Güncel semantikte PASS üreteceği hem kayıtlı
+   rapordan hem canlı `wipeAvdAfterTest` ölçümünden doğrulandı, fakat veritabanı
+   durumu geçmişi bozmamak için `awaiting_device_test` bırakıldı. Panelden
+   "Cihaz testini yeniden dene" ile temiz bir sonuç alınabilir.
+2. **Review Repair ve önceki bulgu hafızası hâlâ gerçek koşuda tetiklenmedi.**
    Plan ve kabul kriteri sözleşmeleri 2. koşuda doğrulandı, ancak reviewer ilk turda
    PASS verdiği için onarım döngüsü ve geçmiş bulgu aktarımı çalışmadı. Bunlar yalnız
    birim testleriyle korunuyor. Zorlanacak bir şey değil; bir koşu reviewer'ı
    bloklarsa doğal olarak sınanır.
-2. **Eski örnek projeler yeni sözleşmelerin gerisinde.** `Servis Cep` kritik akış
+3. **Eski örnek projeler yeni sözleşmelerin gerisinde.** `Servis Cep` kritik akış
    sözleşmesinden önce üretildiği için `USER_FLOWS.json` ve `integration_test/`
    içermez; cihaz kapısı `isRepairableDeviceFailure` kuralıyla hemen durur. Elle
    akış eklemek yerine güncel spec'le yeniden üretmek doğru yol. `Stok Cep` eski
    cihaz koşusunun başarısız kaydıdır; yeniden deneme öncesinde güncel ortam kapısı
    ve stabil Android build-tools ile değerlendirilmelidir.
-3. **Tekrarlayan reviewer bulgularını mekanik kontrole çevirmek** — bu bir kural,
+4. **`npm run test:minimal-live` bozuk.** `scripts/minimal-live-check.mjs` içindeki
+   yerel reviewer fixture'ı `'Local reviewer fixture: PASS.'` döndürüyor; güncel
+   inceleme sözleşmesi bunu ayrıştıramıyor (`INVALID_REVIEWER_RESULT`), dolayısıyla
+   betik `awaiting_user_review` beklerken düşer. Doğrulandı — varsayım değil.
+   Düzeltmesi küçük: fixture'ın sözleşmeye uygun JSON döndürmesi yeterli. `npm test`
+   ve çalışma zamanı etkilenmez.
+5. **Tekrarlayan reviewer bulgularını mekanik kontrole çevirmek** — bu bir kural,
    açık iş değil. Sessiz `catch` için bir kez yapıldı ve reviewer'ı o konudan
    tamamen çıkardı; aynı bulgu ikinci kez görüldüğünde aynı yol izlenmelidir.
+
+## Bilerek ertelenenler
+
+Bunlar gerçek fakat MVP çıktısını, güvenilirliği, maliyeti veya pazar testini
+bugün iyileştirmiyor. Kayda geçiyorlar ki tekrar keşfedilmesinler.
+
+- **`#execute` hata yolunda `#syncProjectState` çağırmıyor.** Feedback yolu çağırıyor.
+  Sonuç: bir hata sonrası `PROJECT_STATE.json` bayat kalır. Bu dosya yalnız agent
+  context'i içindir ve resume başlangıcında yeniden yazılır, yani gözlenen bir
+  arızaya yol açmadı.
+- **Planlama agent'ları resume'da görev durumuna değil dosya varlığına bakıyor.**
+  `integration`/`reviewer` için kullanılan `#taskCompleted` kontrolü planlama
+  aşamasında yok; worktree kirliyse tamamlanmış bir agent yeniden koşabilir.
+  Pratikte `#commitArtifact` worktree'yi temiz bıraktığı için tetiklenmedi.
+- **Panel kabul kriteri metnini göstermiyor.** `criterionText()` reviewer
+  verdict'inde `text` alanı arıyor; sözleşmenin şekli `{id, status, evidence}` ve
+  `ACCEPTANCE_CRITERIA.json` API'de hiç servis edilmiyor, bu yüzden kriter satırında
+  yalnız kimlik görünüyor. Kanıt metni ayrıca gösteriliyor, bilgi kaybı sınırlı.
+- **`server.mjs` sözleşme hatalarına 500 dönüyor.** "Bu proje X durumundayken devam
+  ettirilemez" gibi durumlar 409/422 olmalı. Panel mesajı yine gösteriyor.
+- **HTTP katmanının test kapsamı yok.** 121 testin hiçbiri `server.mjs` üzerinden
+  geçmiyor; ayrıca modül import edilir edilmez `listen` çağırdığı için exported
+  `createServer` test içinden güvenle kullanılamıyor.
+
+## Planlanan yön (henüz uygulanmadı)
+
+Bir sonraki muhtemel yön döngünün sağ tarafına ilk adımdır: **doğrulanmış MVP →
+yayınlanabilir pazar deneyi.** Olası ilk artış release artefaktı/hazırlık işidir.
+
+Bunların **hiçbiri bugün mevcut değildir** ve mevcutmuş gibi belgelenmemelidir:
+release derlemesi, imzalama/keystore otomasyonu, mağaza yükleme, dağıtım
+otomasyonu, analitik, deney sözleşmeleri veya pazar hazırlık araçları. Hattın
+ürettiği tek artefakt `flutter build apk --debug` çıktısıdır.
 
 ## Repository haritası
 
@@ -262,7 +368,7 @@ kaydırma konumu korunur. Olay uç noktası son 400 olayı döndürür.
 | `src/server.mjs` | HTTP API ve panel |
 | `src/orchestrator.mjs` | Pipeline, kapılar, onarım döngüleri, iskelet üretimi |
 | `src/codex-runner.mjs` | Codex süreci, timeout, JSONL olayları |
-| `src/async-process-runner.mjs` | Ortak asenkron süreç, timeout ve process-tree sonlandırma |
+| `src/async-process-runner.mjs` | Bütün harici süreçler: asenkron yürütme, deterministik timeout, process-tree sonlandırma |
 | `src/database.mjs` | SQLite; proje/görev/agent kayıtları ve durum sözleşmeleri |
 | `src/spec-validator.mjs` | Spec doğrulama, kritik akış ve kabul kriteri ayrıştırma |
 | `src/task-plan.mjs` | Plan sözleşmesi ve paralellik kuralları |

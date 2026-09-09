@@ -145,18 +145,137 @@ function launchEmulator(executable, args) {
   });
 }
 
-/** Factory-resets only an Android Studio AVD and leaves physical devices alone. */
-export async function wipeAvdAfterTest({
-  run, adb, device, workspace, launch = launchEmulator, sleep = wait,
-}) {
-  if (!String(device || '').startsWith('emulator-')) {
-    return { status: 'SKIPPED', details: 'Fiziksel cihaz otomatik olarak sıfırlanmadı.', log: '' };
+/**
+ * System properties that also carry the AVD name. `adb emu avd name` talks to
+ * the emulator console over TCP, which a real run could not reach ("could not
+ * connect to TCP port 5554") after every critical flow had already passed.
+ * Properties are readable over the ordinary adb shell, so they answer when the
+ * console does not.
+ */
+const AVD_NAME_PROPERTIES = Object.freeze(['ro.boot.qemu.avd_name', 'ro.kernel.qemu.avd_name']);
+
+const isUsableAvdName = value => Boolean(value)
+  && value !== 'OK' && !/^KO\b/.test(value) && !/^error\b/i.test(value);
+
+/**
+ * Resolves the name of the running AVD. The emulator console stays the primary
+ * source because it answers for every image; the properties are a fallback, not
+ * a replacement. The winning source is reported so a host that only answers
+ * through the fallback stays visible instead of silently working.
+ */
+export async function resolveAvdName({ run, adb, device }) {
+  const log = [];
+  const consoleResult = await run(adb, ['-s', device, 'emu', 'avd', 'name']);
+  log.push([consoleResult.stdout, consoleResult.stderr].filter(Boolean).join('\n').trim());
+  const fromConsole = String(consoleResult.stdout || '').split(/\r?\n/)
+    .map(value => value.trim()).find(isUsableAvdName);
+  if (consoleResult.status === 0 && fromConsole) {
+    return { name: fromConsole, source: 'emu avd name', log: log.filter(Boolean).join('\n') };
   }
-  const named = await run(adb, ['-s', device, 'emu', 'avd', 'name']);
-  const avdName = String(named.stdout || '').split(/\r?\n/).map(value => value.trim())
-    .find(value => value && value !== 'OK');
-  if (named.status !== 0 || !avdName) {
-    return { status: 'FAIL', details: 'Test AVD adı belirlenemedi; otomatik wipe yapılamadı.', log: [named.stdout, named.stderr].filter(Boolean).join('\n') };
+  for (const property of AVD_NAME_PROPERTIES) {
+    const probe = await run(adb, ['-s', device, 'shell', 'getprop', property]);
+    const value = String(probe.stdout || '').split(/\r?\n/).map(entry => entry.trim()).find(Boolean);
+    log.push(`getprop ${property}: ${value || '(boş)'}`);
+    if (probe.status === 0 && isUsableAvdName(value)) {
+      return { name: value, source: `getprop ${property}`, log: log.filter(Boolean).join('\n') };
+    }
+  }
+  return { name: null, source: null, log: log.filter(Boolean).join('\n') };
+}
+
+/** Kernels the Android Studio emulator runs on; a wipeable AVD reports one. */
+const AVD_HARDWARE = /^(?:goldfish|ranchu)/i;
+
+/** Supported Android runtime targets a device validation may run against. */
+export const DEVICE_TARGET_TYPES = Object.freeze({
+  avd: 'android_studio_avd',
+  thirdPartyEmulator: 'third_party_emulator',
+  physical: 'physical_device',
+});
+
+const DEVICE_TARGET_LABELS = Object.freeze({
+  android_studio_avd: 'Android Studio AVD',
+  third_party_emulator: 'Üçüncü taraf Android emülatörü',
+  physical_device: 'Fiziksel Android cihaz',
+});
+
+export function describeDeviceTarget(target) {
+  if (!target) return 'Bilinmeyen Android hedefi';
+  const label = DEVICE_TARGET_LABELS[target.type] || target.type;
+  const identity = [target.manufacturer, target.model].filter(Boolean).join(' ');
+  const details = [identity, target.hardware && `ro.hardware=${target.hardware}`].filter(Boolean);
+  return details.length ? `${label} (${details.join(', ')})` : label;
+}
+
+/**
+ * Classifies the Android runtime the validation runs against. Device validation
+ * is not AVD-only: a third-party emulator and a physical device are supported
+ * targets too, and calling either one an AVD would be a lie the reports repeat.
+ *
+ * The device id cannot decide it. Third-party emulators take `emulator-NNNN`
+ * too, answer none of the AVD console commands and spoof a real device profile —
+ * a measured host reports `ro.hardware=qcom` with a vivo model behind
+ * `emulator-5554`. Only the AVD category may receive AVD-specific operations.
+ */
+export async function detectDeviceTarget({ run, adb, device }) {
+  const read = async property => {
+    const result = await run(adb, ['-s', device, 'shell', 'getprop', property]);
+    return result.status === 0 ? String(result.stdout || '').trim() : '';
+  };
+  const hardware = await read('ro.hardware');
+  const isAvd = AVD_HARDWARE.test(hardware)
+    // Older images expose the emulator only through the qemu boot properties.
+    || (await read('ro.kernel.qemu')) === '1' || (await read('ro.boot.qemu')) === '1';
+  const type = isAvd ? DEVICE_TARGET_TYPES.avd
+    : String(device || '').startsWith('emulator-') ? DEVICE_TARGET_TYPES.thirdPartyEmulator
+      : DEVICE_TARGET_TYPES.physical;
+  const target = {
+    type,
+    label: DEVICE_TARGET_LABELS[type],
+    device: device || null,
+    hardware: hardware || null,
+    model: (await read('ro.product.model')) || null,
+    manufacturer: (await read('ro.product.manufacturer')) || null,
+    android_release: (await read('ro.build.version.release')) || null,
+    supports_avd_wipe: type === DEVICE_TARGET_TYPES.avd,
+  };
+  return target;
+}
+
+/**
+ * Factory-resets the test AVD. Wiping is an AVD-specific operation, so every
+ * other supported target is skipped rather than reported as broken: there is
+ * nothing to reset on a third-party emulator or a physical device, and the run
+ * that validated the product is not worse for it.
+ */
+export async function wipeAvdAfterTest({
+  run, adb, device, workspace, target = null, launch = launchEmulator, sleep = wait,
+}) {
+  // Cheap and definitive: adb only issues `emulator-NNNN` on the local emulator
+  // console ports, so a different id is never an AVD and needs no probing.
+  if (!String(device || '').startsWith('emulator-')) {
+    return {
+      status: 'SKIPPED', target_type: DEVICE_TARGET_TYPES.physical,
+      details: 'Fiziksel Android cihaz otomatik olarak sıfırlanmadı.', log: '',
+    };
+  }
+  const resolvedTarget = target ?? await detectDeviceTarget({ run, adb, device });
+  if (!resolvedTarget.supports_avd_wipe) {
+    return {
+      status: 'SKIPPED', target_type: resolvedTarget.type,
+      details: `${describeDeviceTarget(resolvedTarget)} için AVD wipe uygulanmaz.`,
+      log: '',
+    };
+  }
+  const named = await resolveAvdName({ run, adb, device });
+  const avdName = named.name;
+  if (!avdName) {
+    // A real AVD whose name no source can answer stays a reported problem.
+    return {
+      status: 'FAIL', target_type: resolvedTarget.type,
+      details: 'Test AVD adı ne emülatör konsolundan ne de cihaz özelliklerinden okunabildi; otomatik wipe yapılamadı.',
+      log: named.log,
+    };
   }
   const sdkRoot = path.dirname(path.dirname(adb));
   const emulator = path.join(sdkRoot, 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
@@ -173,9 +292,10 @@ export async function wipeAvdAfterTest({
     return { status: 'FAIL', details: `Test AVD temiz başlatılamadı: ${started.error || 'bilinmeyen hata'}`, log: started.error || '' };
   }
   return {
-    status: 'PASS', avd_name: avdName,
+    status: 'PASS', target_type: resolvedTarget.type,
+    avd_name: avdName, avd_name_source: named.source,
     details: `${avdName} test sonrasında sıfırlandı ve temiz olarak yeniden başlatıldı.`,
-    log: `AVD wipe başlatıldı: ${avdName}`,
+    log: [named.log, `AVD wipe başlatıldı: ${avdName} (${named.source})`].filter(Boolean).join('\n'),
   };
 }
 
