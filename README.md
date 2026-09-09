@@ -171,9 +171,11 @@ kontroller tek başına ürün kabulü için yeterli sayılmaz.
 Kapı, kritik akışların `integration_test/` kapsamını, cihaz üstündeki Flutter
 integration testlerini, APK kurulumunu, uygulama sürecini ve logcat crash kayıtlarını
 doğrular. Kanıtlar `DEVICE_REPORT.json` ve `QUALITY_LOGS/DEVICE_*` dosyalarında
-saklanır. Integration test dosyaları birbirinden ayrı süreçlerde ve dosya başına
-180 saniyelik sınırla çalışır. Windows'ta süre aşımı bütün Flutter/Dart süreç ağacını
-kapatır; takılan dosyanın yolu cihaz raporunda `failed_file` olarak görünür.
+saklanır. Her `DEVICE_REPORT.json` sonucu orchestrator-owned ayrı bir Git
+checkpoint'ine alınır; repair veya bağımlılık commit'lerine karışmaz. Integration
+test dosyaları birbirinden ayrı süreçlerde ve dosya başına 180 saniyelik sınırla
+çalışır. Windows'ta süre aşımı bütün Flutter/Dart süreç ağacını kapatır; takılan
+dosyanın yolu cihaz raporunda `failed_file` olarak görünür.
 
 ADB yolu `ADB_BIN`, Android SDK platform-tools ve sistem PATH konumlarından sırayla
 aranır; LDPlayer'a özel yol veya entegrasyon kullanılmaz. Bağlı cihaz yoksa Studio
@@ -196,6 +198,9 @@ Cihazda ürün kaynaklı bir hata çıkarsa en fazla iki hedefli Device Repair t
 uygulanır; her turdan sonra APK yeniden üretilip doğrulanır. Aynı hata imzası
 tekrarlarsa, tur hakkı biterse veya hata bir agent turuyla düzeltilemezse
 `DEVICE_ROOT_CAUSE_REPORT.md` yazılır ve döngü durur.
+Device Repair kodu değiştirdiğinde eşzamanlı veya checkpoint'ten yüklenmiş eski
+reviewer kararı geçersiz sayılır; final kalite ve cihaz PASS commit'lerinden sonra
+reviewer yeniden çalışmadan proje kullanıcı onayına sunulmaz.
 
 Cihaz kapısı arızayı sınıflandırır. Emülatör kopması veya toolchain çöküşü gibi
 ortam arızaları `DEVICE_REPORT.json` içinde `failure_kind: "environment"` ile

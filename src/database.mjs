@@ -337,6 +337,19 @@ export class Database {
       WHERE status IN (${placeholders})
     `).run(now, ...IN_FLIGHT_PROJECT_STATUSES);
     this.connection.prepare(`
+      UPDATE projects
+      SET status = 'interrupted',
+          error = 'Reviewer final kodu tamamlamadığı için proje güvenli devam noktasına alındı.',
+          updated_at = ?
+      WHERE status = 'awaiting_user_review'
+        AND EXISTS (
+          SELECT 1 FROM tasks
+          WHERE tasks.project_id = projects.id
+            AND tasks.role = 'reviewer'
+            AND tasks.status <> 'completed'
+        )
+    `).run(now);
+    this.connection.prepare(`
       UPDATE agent_runs
       SET status = 'interrupted', error = 'Studio yeniden başlatıldığı için agent çalışması kesildi.', completed_at = ?
       WHERE status IN ('queued', 'running')

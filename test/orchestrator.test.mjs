@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import { Database } from '../src/database.mjs';
 import { Orchestrator } from '../src/orchestrator.mjs';
@@ -341,6 +342,11 @@ test('resuming after a device wait does not rerun agents that already completed'
   const waiting = await waitForStatus(database, project.id, ['awaiting_device_test', 'failed', 'awaiting_user_review']);
   assert.equal(waiting.status, 'awaiting_device_test', waiting.error);
   assert.equal(database.getTask(`${project.id}:integration`).status, 'completed');
+  const waitingStatus = spawnSync('git', ['status', '--porcelain'], {
+    cwd: project.workspace_path, encoding: 'utf8', windowsHide: true,
+  });
+  assert.equal(waitingStatus.status, 0, waitingStatus.stderr);
+  assert.equal(waitingStatus.stdout.trim(), '', 'WAITING cihaz raporu repository\'yi kirli bıraktı');
 
   // A failed on-demand repair left by an older run must not take the single
   // ready slot from reviewer when the checkpoint resumes.
@@ -360,6 +366,15 @@ test('resuming after a device wait does not rerun agents that already completed'
   assert.equal(byRole('coordinator'), 1);
   assert.equal(byRole('integration'), 1, 'tamamlanmış Integration agent yeniden çalıştırıldı');
   assert.equal(byRole('reviewer'), 1);
+  const reportHistory = spawnSync(
+    'git', ['log', '--format=%s', '--', 'DEVICE_REPORT.json'],
+    { cwd: project.workspace_path, encoding: 'utf8', windowsHide: true },
+  );
+  assert.equal(reportHistory.status, 0, reportHistory.stderr);
+  assert.deepEqual(
+    reportHistory.stdout.trim().split(/\r?\n/),
+    ['test: record Android device report', 'test: record Android device report'],
+  );
   database.close();
 });
 
@@ -482,10 +497,12 @@ test('a product failure on the device triggers a targeted repair and a rebuild',
   const database = new Database(path.join(directory, 'studio.db'));
   const deviceRuns = [];
   const repairPrompts = [];
+  let reviewerRuns = 0;
   let builds = 0;
 
   class RepairingRunner extends FakeRunner {
     async run(options) {
+      if (/Review the complete|response JSON only/i.test(options.prompt)) reviewerRuns += 1;
       if (options.prompt.includes('Device repair turu')) {
         repairPrompts.push(options.prompt);
         fs.writeFileSync(path.join(options.workspace, 'device-fix.txt'), `fix ${repairPrompts.length}`);
@@ -536,6 +553,22 @@ test('a product failure on the device triggers a targeted repair and a rebuild',
   assert.match(repairPrompts[0], /Device repair turu 1\/2/);
   assert.equal(builds, 2, 'düzeltmeden sonra APK yeniden üretilmedi');
   assert.equal(database.getTask(`${project.id}:device_repair`).status, 'completed');
+  assert.equal(reviewerRuns, 2, 'device repair final kodu yeniden reviewer incelemesine göndermedi');
+  assert.equal(database.getTask(`${project.id}:reviewer`).status, 'completed');
+  const gitStatus = spawnSync('git', ['status', '--porcelain'], {
+    cwd: project.workspace_path, encoding: 'utf8', windowsHide: true,
+  });
+  assert.equal(gitStatus.status, 0, gitStatus.stderr);
+  assert.equal(gitStatus.stdout.trim(), '', 'cihaz raporu generated repository\'yi kirli bıraktı');
+  const reportHistory = spawnSync(
+    'git', ['log', '--format=%s', '--', 'DEVICE_REPORT.json'],
+    { cwd: project.workspace_path, encoding: 'utf8', windowsHide: true },
+  );
+  assert.equal(reportHistory.status, 0, reportHistory.stderr);
+  assert.deepEqual(
+    reportHistory.stdout.trim().split(/\r?\n/),
+    ['test: record Android device report', 'test: record Android device report'],
+  );
   database.close();
 });
 

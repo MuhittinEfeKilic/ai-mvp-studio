@@ -588,7 +588,13 @@ export class Orchestrator {
       throw new Error(`${artifact} agent tarafından oluşturulmadı.`);
     }
     // Compare whole paths: a suffix match would also accept OTHER_ARCHITECTURE.md.
-    const unexpected = git(workspace, ['status', '--short', '--untracked-files=all'])
+    const status = spawnSync('git', ['status', '--short', '--untracked-files=all'], {
+      cwd: workspace, encoding: 'utf8', windowsHide: true,
+    });
+    if (status.status !== 0) {
+      throw new Error(status.stderr?.trim() || 'git status başarısız.');
+    }
+    const unexpected = status.stdout
       .split(/\r?\n/)
       .filter(Boolean)
       .map(line => line.slice(3).trim().replace(/^"|"$/g, '').replaceAll('\\', '/'))
@@ -854,7 +860,7 @@ export class Orchestrator {
     if (result.status !== 0) {
       throw new Error(`Plan bağımlılıkları kurulamadı (${packages.join(', ')}): ${commandDetails(result)}`);
     }
-    git(workspace, ['add', '-A']);
+    git(workspace, ['add', 'pubspec.yaml', 'pubspec.lock']);
     if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: install planned dependencies']);
   }
 
@@ -995,6 +1001,7 @@ export class Orchestrator {
         minimumFreeMb: this.deviceMinFreeMb,
       });
     writeDeviceReport(workspace, report);
+    this.#commitArtifact(workspace, 'DEVICE_REPORT.json', 'test: record Android device report');
     this.database.updateProject(projectId, { device_report: JSON.stringify(report) });
     this.database.addEvent(projectId, 'device_test.completed', report);
     // Only a host/emulator problem parks the project; a product failure is
@@ -1441,6 +1448,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         // A repair changed the code the concurrent review looked at.
         if (outcome.repairRounds > 0) {
           if (review?.error) throw review.error;
+          reviewerMessage = null;
           review = null;
         }
         this.database.updateProject(id, { status: 'device_test_passed' });

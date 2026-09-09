@@ -111,7 +111,13 @@ zarifçe eski davranışa döner.
 
 Kapılar **yetkilidir**: reviewer bunların sonuçlarını yeniden yargılamaz, PASS'i
 kanıt kabul eder. Her onarım turundan sonra kod değiştiği için alt kapılar yeniden
-koşar.
+koşar. Device repair kodu değiştirdiyse eşzamanlı veya önceki checkpoint'ten gelen
+reviewer mesajı da geçersiz kılınır; final kalite ve cihaz raporları commit edildikten
+sonra reviewer yeniden tamamlanmadan proje kullanıcı onayına sunulamaz.
+
+Her `DEVICE_REPORT.json` PASS, FAIL veya WAITING sonucunda orchestrator-owned ayrı
+bir Git commit'ine alınır. Böylece rapor dependency/repair commit'lerine karışmaz ve
+cihaz kapısı generated repository'yi kirli bırakmaz.
 
 Kalite kapısındaki dördüncü çek `src/source-diagnostics.mjs`'tir: üretilen Dart
 kaynağında **boş catch bloğu** veya **hatayı ne inceleyen ne yeniden fırlatan**

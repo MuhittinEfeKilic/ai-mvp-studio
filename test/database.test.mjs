@@ -31,6 +31,14 @@ test('every in-flight project status becomes resumable after a restart', () => {
       workspace_path: path.join(directory, status),
     });
   }
+  database.createProject({
+    id: 'project-stale-review', name: 'stale review', prompt: 'spec',
+    status: 'awaiting_user_review', workspace_path: path.join(directory, 'stale-review'),
+  });
+  database.createTasks([{
+    id: 'project-stale-review:reviewer', project_id: 'project-stale-review',
+    name: 'Reviewer', role: 'reviewer', status: 'pending', allowed_paths: ['**'],
+  }]);
 
   database.markStaleRunsInterrupted();
 
@@ -42,5 +50,7 @@ test('every in-flight project status becomes resumable after a restart', () => {
   for (const status of keep) {
     assert.equal(database.getProject(`project-${status}`).status, status);
   }
+  assert.equal(database.getProject('project-stale-review').status, 'interrupted');
+  assert.match(database.getProject('project-stale-review').error, /Reviewer final kodu tamamlamadığı/);
   database.close();
 });

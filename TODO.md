@@ -2,8 +2,8 @@
 
 Son güncelleme: 9 Eylül 2026
 
-Son tam kontrol: `npm run check` başarılı, `npm test` **102/102 PASS**. Aşağıdaki
-iki yeni açık gerçek `Akış Cep` cihaz onarımı koşusunda doğrulanmıştır.
+Bu listedeki doğrulanmış açıklar kapatılmıştır. Son tam kontrol: `npm run check`
+başarılı, `npm test` **102/102 PASS**.
 
 Bu liste, güncel mimari ve test incelemesinde doğrulanan işleri içerir. Maddeler
 öncelik sırasındadır. Bir madde tamamlandığında ilgili regresyon testi eklenmeli,
@@ -12,12 +12,12 @@ güncellenmelidir.
 
 ## P0 — Device repair sonrasında reviewer sonucunu zorunlu olarak yenile
 
-- [ ] Device repair kodu değiştirdiğinde bellekteki eski `reviewerMessage` değerini
+- [x] Device repair kodu değiştirdiğinde bellekteki eski `reviewerMessage` değerini
   de geçersiz kıl; yalnız task kaydını `pending` yapmakla yetinme.
-- [ ] Reviewer'ı final kalite ve cihaz PASS raporlarını içeren son commit üzerinde
+- [x] Reviewer'ı final kalite ve cihaz PASS raporlarını içeren son commit üzerinde
   yeniden çalıştır ve task'ı `completed` olmadan projeyi `awaiting_user_review`
   durumuna geçirme.
-- [ ] Eşzamanlı ilk reviewer tamamlandıktan sonra device repair oluşan senaryoda
+- [x] Eşzamanlı ilk reviewer tamamlandıktan sonra device repair oluşan senaryoda
   ikinci reviewer koşusunu ve tutarlı proje/task durumunu doğrulayan regresyon ekle.
 
 ### Bulgu
@@ -29,11 +29,11 @@ kaldı; yani final kod gerçekten yeniden incelenmedi.
 
 ## P1 — Cihaz raporlarının Git sahipliğini ve checkpoint'ini düzelt
 
-- [ ] Her cihaz koşusunun `DEVICE_REPORT.json` çıktısını orchestrator-owned ayrı
+- [x] Her cihaz koşusunun `DEVICE_REPORT.json` çıktısını orchestrator-owned ayrı
   bir commit/checkpoint olarak kaydet.
-- [ ] Repair ve bağımlılık kurulumundaki genel `git add -A` işlemlerinin önceki
+- [x] Repair ve bağımlılık kurulumundaki genel `git add -A` işlemlerinin önceki
   cihaz raporunu yanlış commit'e sürüklemesini engelle.
-- [ ] PASS, FAIL ve WAITING cihaz sonuçlarından sonra generated repository'nin
+- [x] PASS, FAIL ve WAITING cihaz sonuçlarından sonra generated repository'nin
   beklenmeyen kirli dosya bırakmadığını regresyonla doğrula.
 
 ### Bulgu
