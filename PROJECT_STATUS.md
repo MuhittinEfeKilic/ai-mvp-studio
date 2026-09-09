@@ -33,7 +33,7 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 
 | Kimlik | Ad | Durum | Ne kanıtlıyor |
 | --- | --- | --- | --- |
-| `1d95246c0382` | Akış Cep | `awaiting_user_review` | Advanced v2 gerçek koşu; 47/47 kalite testi, debug APK, 6/6 emülatör akışı ve reviewer PASS. Device repair, düzenlenen rutin snapshot kusurunu yakalayıp düzeltti |
+| `1d95246c0382` | Akış Cep | `awaiting_device_test` | Final kodda 47/47 kalite testi, 6/6 emülatör akışı ve yenilenmiş reviewer PASS. Ürün akışları geçti; yalnız test sonrası AVD adı okunamadığı için ortam temizleme retry'ı bekliyor |
 | `7b6df59adcb9` | Ders Notu (2. koşu) | `awaiting_user_review` | Yeni sözleşmelerin ilk gerçek doğrulaması; tek incelemede temiz geçti |
 | `c67140223074` | Ders Notu (1. koşu) | `awaiting_user_review` | İlk tam uçtan uca başarı; cihaz kapısı PASS; feedback turu gerçek kusuru düzeltti |
 | `f87128fb48bf` | Bakım Takvimi | `interrupted` | Beş cihaz akışından dördü tamamlandıktan sonra Studio yeniden başlatıldığı için checkpoint'te durdu; son ölçümde 4973 MB boş alan vardı |
