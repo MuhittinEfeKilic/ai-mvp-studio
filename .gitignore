@@ -3,3 +3,4 @@ data/
 projects/
 node_modules/
 work/
+.tool_state/
