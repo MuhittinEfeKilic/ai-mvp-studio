@@ -173,9 +173,14 @@ integration testlerini, APK kurulumunu, uygulama sürecini ve logcat crash kayı
 doğrular. Kanıtlar `DEVICE_REPORT.json` ve `QUALITY_LOGS/DEVICE_*` dosyalarında
 saklanır. Her `DEVICE_REPORT.json` sonucu orchestrator-owned ayrı bir Git
 checkpoint'ine alınır; repair veya bağımlılık commit'lerine karışmaz. Integration
-test dosyaları birbirinden ayrı süreçlerde ve dosya başına 180 saniyelik sınırla
-çalışır. Windows'ta süre aşımı bütün Flutter/Dart süreç ağacını kapatır; takılan
-dosyanın yolu cihaz raporunda `failed_file` olarak görünür. ADB hazırlık, install,
+test dosyaları geçici bir Dart girişinde gruplandırılarak tek Flutter sürecinde,
+tek test APK kurulumu ile çalışır. Her senaryo 120 saniye; toplam süreç ise
+180 saniye derleme payı + dosya başına 120 saniye ile sınırlıdır. JSON sonuçları
+`scenarios`, `completed_files` ve `failed_file` alanlarında tutulur; atlanan veya
+sonucu bulunmayan akışlar PASS sayılmaz. Testler kendi verilerini setUp/tearDown
+ile izole eder. Teslim APK'sı test derlemesinden önce korunur, sonra geri yüklenip
+tek ek kurulumla normal açılışı kontrol edilir. Test dosyaları arasında kurulum
+yapılmaz; en sonda hedef uygulama kaldırılır. ADB hazırlık, install,
 launch, logcat, screenshot ve UI dump alt komutları da ortak 10 dakikalık process
 sınırını beklemez; 120 saniyelik `ADB_TIMEOUT` ile environment WAITING sonucuna döner.
 

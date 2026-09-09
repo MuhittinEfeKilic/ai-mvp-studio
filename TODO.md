@@ -3,7 +3,16 @@
 Son güncelleme: 9 Eylül 2026
 
 Bu listedeki doğrulanmış açıklar kapatılmıştır. Son tam kontrol: `npm run check`
-başarılı, `npm test` **103/103 PASS**.
+başarılı, `npm test` **104/104 PASS**.
+
+## Toplu cihaz testi
+
+- [x] Tüm integration dosyalarını tek geçici Dart girişinden çalıştır.
+- [x] Senaryo bazında JSON sonuçlarını ve kısmi başarısızlığı raporla.
+- [x] Teslim APK'sını koru; normal açılış kontrolünden sonra hedef paketi kaldır.
+- [x] Agent talimatlarına aynı oturumda test verisi/kaynak izolasyonunu ekle.
+- [x] Gerçek Akış Cep üzerinde toplu koşuyu doğrula (6 dosya / 7 senaryo PASS;
+  teslim APK açılışı ve paket kaldırma PASS, 58.5 saniye; eski AVD adı sorunu WAITING).
 
 Bu liste, güncel mimari ve test incelemesinde doğrulanan işleri içerir. Maddeler
 öncelik sırasındadır. Bir madde tamamlandığında ilgili regresyon testi eklenmeli,

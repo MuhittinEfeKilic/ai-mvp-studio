@@ -7,11 +7,16 @@ import test from 'node:test';
 import {
   ADB_COMMAND_TIMEOUT_MS, adbCandidates, classifyDeviceFailure, describeDeviceFailure, isRepairableDeviceFailure,
   parseAdbDevices,
+  parseDeviceSuite, renderDeviceSuite,
   runAndroidDeviceGate,
   validateFlowCoverage,
 } from '../src/device-tester.mjs';
 
 const successfulWipe = async () => ({ status: 'PASS', avd_name: 'Test_AVD', details: 'temizlendi' });
+const events = (file, id = 1, result = 'success') => [
+  JSON.stringify({ type: 'testStart', test: { id, name: `${file} scenario` } }),
+  JSON.stringify({ type: 'testDone', testID: id, result, skipped: false }),
+].join('\n');
 
 test('ADB candidates prefer explicit configuration and never include LDPlayer', () => {
   const candidates = adbCandidates({ ADB_BIN: 'D:\\tools\\adb.exe', LOCALAPPDATA: 'C:\\Local' }, 'win32');
@@ -53,17 +58,23 @@ test('device gate runs integration, installs APK, launches app and rejects fatal
   fs.mkdirSync(path.join(workspace, 'integration_test'));
   fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
   const adbOptions = [];
+  const calls = [];
+  const apk = path.join(workspace, 'app.apk');
+  fs.writeFileSync(apk, 'delivery');
   const run = (command, args, options = {}) => {
+    calls.push({ command, args });
+    if (command === 'flutter') fs.writeFileSync(apk, 'test-apk');
+    if (args.includes('install')) assert.equal(fs.readFileSync(apk, 'utf8'), 'delivery');
     if (command === 'adb') adbOptions.push(options);
     if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
     if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
     if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
     if (args.includes('pidof')) return { status: 0, stdout: '1234\n' };
     if (args.includes('logcat') && args.includes('-d')) return { status: 0, stdout: 'Application started' };
-    return { status: 0, stdout: command === 'flutter' ? 'All tests passed' : 'Success' };
+    return { status: 0, stdout: command === 'flutter' ? events('integration_test/main_test.dart') : 'Success' };
   };
   const report = await runAndroidDeviceGate({
-    workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}],
+    workspace, apkPath: apk, packageName: 'com.example.app', flows: [{}],
     flutterExecutable: 'flutter', adbExecutable: 'adb', run, wipeDevice: successfulWipe,
   });
   assert.equal(report.status, 'PASS');
@@ -72,6 +83,10 @@ test('device gate runs integration, installs APK, launches app and rejects fatal
   assert.ok(adbOptions.length > 0);
   assert.ok(adbOptions.every(options => options.timeout === ADB_COMMAND_TIMEOUT_MS));
   assert.ok(adbOptions.every(options => options.timeoutLabel === 'ADB_TIMEOUT'));
+  assert.equal(calls.filter(call => call.command === 'flutter').length, 1);
+  assert.equal(calls.at(-1).args[2], 'uninstall');
+  assert.equal(fs.readFileSync(apk, 'utf8'), 'delivery');
+  assert.equal(fs.existsSync(`${apk}.studio-backup`), false);
 });
 
 test('a hung adb install becomes an environment wait at the ADB timeout', async () => {
@@ -86,7 +101,7 @@ test('a hung adb install becomes an environment wait at the ADB timeout', async 
       if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
       if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
       if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
-      if (command === 'flutter') return { status: 0, stdout: 'All tests passed' };
+      if (command === 'flutter') return { status: 0, stdout: events('integration_test/main_test.dart') };
       if (args.includes('install')) {
         installCalls.push(options);
         return { status: null, stdout: '', stderr: 'ADB_TIMEOUT: süreç sınırı aştı', timedOut: true };
@@ -102,7 +117,7 @@ test('a hung adb install becomes an environment wait at the ADB timeout', async 
   assert.equal(installCalls[0].timeoutLabel, 'ADB_TIMEOUT');
 });
 
-test('device gate runs integration files separately and reports the timed-out file', async () => {
+test('device gate uses one suite and reports partial progress on timeout', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-timeout-'));
   fs.mkdirSync(path.join(workspace, 'integration_test'));
   fs.writeFileSync(path.join(workspace, 'integration_test', 'a_test.dart'), 'void main() {}');
@@ -117,7 +132,8 @@ test('device gate runs integration files separately and reports the timed-out fi
       if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
       if (command === 'flutter') {
         flutterCalls.push({ args, timeout: options.timeout });
-        if (args.some(arg => arg.endsWith('b_test.dart'))) return { status: null, stdout: '', stderr: 'DEVICE_TEST_TIMEOUT', timedOut: true };
+        assert.match(fs.readFileSync(path.join(workspace, args[1]), 'utf8'), /as flow1/);
+        return { status: null, stdout: events('integration_test/a_test.dart'), stderr: 'DEVICE_TEST_TIMEOUT', timedOut: true };
       }
       return { status: 0, stdout: 'Success', stderr: '' };
     },
@@ -126,7 +142,19 @@ test('device gate runs integration files separately and reports the timed-out fi
   assert.equal(report.checks.integration_test.failed_file, 'integration_test/b_test.dart');
   assert.equal(report.checks.integration_test.timed_out, true);
   assert.equal(report.checks.integration_test.completed_files.length, 1);
-  assert.deepEqual(flutterCalls.map(call => call.timeout), [180_000, 180_000]);
+  assert.deepEqual(flutterCalls.map(call => call.timeout), [420_000]);
+  assert.equal(fs.readdirSync(path.join(workspace, 'integration_test')).length, 2);
+});
+
+test('suite reporting rejects skipped, empty and unfinished flows', () => {
+  const files = ['integration_test/a_test.dart', 'integration_test/b_test.dart'];
+  assert.match(renderDeviceSuite(files), /group\("integration_test\/b_test.dart", flow1.main\)/);
+  const parsed = parseDeviceSuite(events(files[0]) + '\n' + events(files[1], 2, 'error'), files);
+  assert.deepEqual(parsed.completed_files, [files[0]]);
+  assert.equal(parsed.failed_file, files[1]);
+  assert.equal(parseDeviceSuite('All tests passed', files).completed_files.length, 0);
+  const skipped = events(files[0]).replace('"skipped":false', '"skipped":true');
+  assert.equal(parseDeviceSuite(skipped, files).completed_files.length, 0);
 });
 
 test('device failure description names the check that actually failed', () => {

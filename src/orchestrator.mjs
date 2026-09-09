@@ -496,6 +496,9 @@ export class Orchestrator {
   }
 
   async #runAgentWithSlot({ projectId, taskKey, agentName, role, workspace, prompt }) {
+    if (['flutter_builder', 'integration', 'test_strategy', 'device_repair', 'repair', 'review_repair'].includes(role)) {
+      prompt += '\nIntegration tests run together in one installed test application. Keep main() synchronous for test registration. Use setUp/tearDown/addTearDown to reset providers, controllers, database connections, temporary storage and global state for each scenario. Use isolated databases; persistence tests reopen their own database within the same scenario. Do not rely on uninstall/reinstall between test files. Do not skip tests or weaken assertions to accommodate shared execution.';
+    }
     const currentTaskId = taskKey.includes(':') ? taskKey : taskId(projectId, taskKey);
     const runId = this.database.createAgentRun(projectId, agentName, role, workspace);
     const checkpointCommit = git(workspace, ['rev-parse', 'HEAD']);

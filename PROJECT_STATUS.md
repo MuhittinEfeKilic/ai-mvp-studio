@@ -25,7 +25,7 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **103/103 test** (9 Eylül 2026). Tam paket Windows üzerinde
+- Studio regresyonu: **104/104 test**. Tam paket Windows üzerinde
   takılmadan tamamlandı; ilk builder dalgası ve Flutter tooling manifesti
   regresyonlarının yanında ADB alt komut timeout'u da geçti.
 
@@ -102,6 +102,18 @@ Kriter dosyası olmayan eski projelerde `expectedCriteria` boş kalır ve doğru
 zarifçe eski davranışa döner.
 
 ## Kapılar ve onarım döngüleri
+
+Cihaz akışları tek geçici Dart girişinde grup olarak kaydedilir ve tek test APK
+kurulumuyla çalışır. Senaryo sonuçları JSON test olaylarından çıkarılır; skip veya
+eksik kanıt PASS değildir. Test başına 120 saniye, toplamda 180 saniye + dosya
+başına 120 saniye sınırı vardır. Teslim APK'sı test derlemesinden korunur ve normal
+açılış için bir kez kurulur. Sonunda hedef paket kaldırılır ve mevcut AVD temizliği
+uygulanır. Agent talimatları senaryo bazında kaynak/veri temizliği gerektirir.
+
+Gerçek Akış Cep toplu doğrulaması: 6 dosyada 7 senaryo PASS, teslim APK açılışı
+ve hedef paket kaldırma PASS; cihaz kapısı 58.5 saniye. Mevcut AVD adı sorgusu
+başarısız kaldığı için genel sonuç WAITING. Kanıt: `.tool_state/suite-live-report.json`.
+Bu bağımsız doğrulama Studio veritabanındaki önceki proje sonucunu değiştirmez.
 
 | Kapı | Sahibi olduğu şey | Onarım turu | Erken durma |
 | --- | --- | --- | --- |

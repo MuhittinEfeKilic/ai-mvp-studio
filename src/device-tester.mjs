@@ -12,6 +12,40 @@ export { parseAdbDevices };
 const normalizePath = value => String(value || '').replaceAll('\\', '/');
 export const ADB_COMMAND_TIMEOUT_MS = 120_000;
 
+export function renderDeviceSuite(files) {
+  const literal = value => JSON.stringify(value).replaceAll('$', '\\$');
+  return [
+    "import 'package:flutter_test/flutter_test.dart';",
+    ...files.map((file, i) => `import ${literal('./' + file.slice('integration_test/'.length))} as flow${i};`),
+    'void main() {',
+    ...files.map((file, i) => `  group(${literal(file)}, flow${i}.main);`),
+    '}', '',
+  ].join('\n');
+}
+
+export function parseDeviceSuite(output, files) {
+  const cases = new Map();
+  for (const line of output.split(/\r?\n/)) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (event.type === 'testStart') {
+      const file = files.find(file => event.test.name.startsWith(file + ' '));
+      if (file) cases.set(event.test.id, { file, name: event.test.name, status: 'RUNNING' });
+    }
+    if (event.type === 'testDone' && cases.has(event.testID)) {
+      cases.get(event.testID).status = event.skipped ? 'SKIPPED'
+        : event.result === 'success' ? 'PASS' : 'FAIL';
+    }
+  }
+  const scenarios = [...cases.values()];
+  const completed = files.filter(file => {
+    const found = scenarios.filter(item => item.file === file);
+    return found.length > 0 && found.every(item => item.status === 'PASS');
+  });
+  return { scenarios, completed_files: completed,
+    failed_file: files.find(file => !completed.includes(file)) || null };
+}
+
 export function adbCandidates(env = process.env, platform = process.platform) {
   const values = [env.ADB_BIN];
   if (platform === 'win32') {
@@ -184,7 +218,7 @@ function defaultRun(command, args, options = {}) {
   return runProcess(invocation.command, invocation.args, {
     ...options,
     timeout: Number(options.timeout) || 600_000,
-    timeoutLabel: 'DEVICE_TEST_TIMEOUT',
+    timeoutLabel: options.timeoutLabel || 'DEVICE_TEST_TIMEOUT',
   });
 }
 
@@ -268,16 +302,21 @@ export async function runAndroidDeviceGate({
   const device = { id: acquired.device };
   report.device = device.id;
   const finish = async result => {
+    const removed = await runAdb(['-s', device.id, 'uninstall', packageName]);
+    result.logs.app_cleanup = outputOf(removed);
+    const absent = /unknown package|not installed/i.test(outputOf(removed));
+    result.checks.app_cleanup = { status: removed.status === 0 || absent ? 'PASS' : 'FAIL' };
     const wiped = await wipeDevice({
       run: runDeviceCommand,
       adb: adbExecutable, device: device.id, workspace,
     });
     result.logs.avd_wipe = wiped.log || wiped.details || '';
     result.checks.avd_wipe = { status: wiped.status, avd_name: wiped.avd_name, details: wiped.details };
-    if (wiped.status === 'FAIL' && result.status === 'PASS') {
+    if ((wiped.status === 'FAIL' || result.checks.app_cleanup.status === 'FAIL') && result.status === 'PASS') {
       return {
         ...result, status: 'WAITING', failure_kind: 'environment',
-        reason: wiped.details || 'Test sonrası AVD temizliği tamamlanamadı.',
+        reason: result.checks.app_cleanup.status === 'FAIL'
+          ? 'Test sonrası hedef uygulama kaldırılamadı.' : wiped.details || 'Test sonrası AVD temizliği tamamlanamadı.',
       };
     }
     return result;
@@ -301,31 +340,34 @@ export async function runAndroidDeviceGate({
   }
 
   const integrationTests = coverage.integration_tests;
-  const integrationLogs = [];
-  const completedFiles = [];
-  let integration = { status: 0, stdout: '', stderr: '' };
-  let failedFile = null;
-  for (const testFile of integrationTests) {
+  const suitePath = `integration_test/studio_suite_${crypto.randomUUID().replaceAll('-', '')}.dart`;
+  const savedApk = `${apkPath}.studio-backup`;
+  const hasApk = fs.existsSync(apkPath);
+  if (hasApk) fs.copyFileSync(apkPath, savedApk, fs.constants.COPYFILE_EXCL);
+  let integration;
+  try {
+    fs.writeFileSync(path.join(workspace, suitePath), renderDeviceSuite(integrationTests), { flag: 'wx' });
     integration = await run(
-      flutterExecutable, ['test', testFile, '-d', device.id],
-      { cwd: workspace, timeout: 180_000 },
+      flutterExecutable, ['test', suitePath, '-d', device.id, '--reporter', 'json', '--timeout', '120s'],
+      { cwd: workspace, timeout: 180_000 + integrationTests.length * 120_000 },
     );
-    integrationLogs.push(`===== ${testFile} =====\n${outputOf(integration) || '(çıktı yok)'}`);
-    if (integration.status !== 0) {
-      failedFile = testFile;
-      break;
+  } finally {
+    fs.rmSync(path.join(workspace, suitePath), { force: true });
+    if (hasApk) {
+      fs.copyFileSync(savedApk, apkPath);
+      fs.rmSync(savedApk);
     }
-    completedFiles.push(testFile);
   }
-  report.logs.integration_test = integrationLogs.join('\n\n');
+  const results = parseDeviceSuite(outputOf(integration), integrationTests);
+  const passed = integration.status === 0 && !results.failed_file;
+  report.logs.integration_test = outputOf(integration);
   report.checks.integration_test = {
-    status: integration.status === 0 ? 'PASS' : 'FAIL', exit_code: integration.status,
-    completed_files: completedFiles, failed_file: failedFile, timed_out: Boolean(integration.timedOut),
-    details: failedFile
-      ? `${failedFile} cihaz testi${integration.timedOut ? ' 180 saniyede zaman aşımına uğradı' : ' başarısız oldu'}.`
-      : `${completedFiles.length} cihaz testi dosyası ayrı süreçlerde geçti.`,
+    status: passed ? 'PASS' : 'FAIL', exit_code: integration.status,
+    ...results, timed_out: Boolean(integration.timedOut), mode: 'single_suite',
+    details: passed ? `${results.completed_files.length} dosya tek test kurulumunda geçti.`
+      : `Toplu cihaz testi tamamlanamadı: ${results.failed_file || 'test süreci'}.`,
   };
-  if (integration.status !== 0) {
+  if (!passed) {
     return finish(environmentWait(report, 'integration_test', report.logs.integration_test)
       ?? productFailure(report));
   }
