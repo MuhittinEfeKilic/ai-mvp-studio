@@ -25,9 +25,9 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **102/102 test** (9 Eylül 2026). Tam paket Windows üzerinde
+- Studio regresyonu: **103/103 test** (9 Eylül 2026). Tam paket Windows üzerinde
   takılmadan tamamlandı; ilk builder dalgası ve Flutter tooling manifesti
-  regresyonları da geçti.
+  regresyonlarının yanında ADB alt komut timeout'u da geçti.
 
 ### Projeler
 
@@ -118,6 +118,10 @@ sonra reviewer yeniden tamamlanmadan proje kullanıcı onayına sunulamaz.
 Her `DEVICE_REPORT.json` PASS, FAIL veya WAITING sonucunda orchestrator-owned ayrı
 bir Git commit'ine alınır. Böylece rapor dependency/repair commit'lerine karışmaz ve
 cihaz kapısı generated repository'yi kirli bırakmaz.
+
+ADB hazırlık, APK install, launch, logcat, screenshot ve UI dump komutları 120
+saniyelik ayrı timeout taşır. Takılan bir ADB işlemi ortak 10 dakikalık process
+sınırını tüketmeden environment arızası olarak `awaiting_device_test` durumuna döner.
 
 Kalite kapısındaki dördüncü çek `src/source-diagnostics.mjs`'tir: üretilen Dart
 kaynağında **boş catch bloğu** veya **hatayı ne inceleyen ne yeniden fırlatan**

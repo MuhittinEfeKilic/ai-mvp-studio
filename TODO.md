@@ -3,12 +3,27 @@
 Son güncelleme: 9 Eylül 2026
 
 Bu listedeki doğrulanmış açıklar kapatılmıştır. Son tam kontrol: `npm run check`
-başarılı, `npm test` **102/102 PASS**.
+başarılı, `npm test` **103/103 PASS**.
 
 Bu liste, güncel mimari ve test incelemesinde doğrulanan işleri içerir. Maddeler
 öncelik sırasındadır. Bir madde tamamlandığında ilgili regresyon testi eklenmeli,
 `npm run check` ve `npm test` çalıştırılmalı, ardından `PROJECT_STATUS.md`
 güncellenmelidir.
+
+## P1 — ADB alt komutlarını cihaz kapısının genel timeout'undan ayır
+
+- [x] APK install, logcat, UI dump, screenshot ve AVD hazırlık komutlarına ayrı
+  sınırlı timeout uygula.
+- [x] Takılan bir `adb install` işleminin genel 10 dakikalık process timeout'unu
+  tüketmeden environment WAITING sonucuna dönmesini doğrula.
+- [x] Timeout değerinin fake runner ve gerçek Windows süreçlerinde options üzerinden
+  taşındığını regresyon testiyle koru.
+
+### Bulgu
+
+`Akış Cep` final doğrulamasında altı integration akışı tamamlandıktan sonra
+`adb install -r -t` işlemi yanıt vermedi. Komut özel timeout taşımadığı için ortak
+process runner'ın 10 dakikalık varsayılanına kaldı.
 
 ## P0 — Device repair sonrasında reviewer sonucunu zorunlu olarak yenile
 

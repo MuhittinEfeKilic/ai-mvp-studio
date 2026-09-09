@@ -10,6 +10,7 @@ import {
 export { parseAdbDevices };
 
 const normalizePath = value => String(value || '').replaceAll('\\', '/');
+export const ADB_COMMAND_TIMEOUT_MS = 120_000;
 
 export function adbCandidates(env = process.env, platform = process.platform) {
   const values = [env.ADB_BIN];
@@ -61,7 +62,7 @@ const ENVIRONMENT_SIGNALS = [
   /INSTALL_FAILED_(?:INSUFFICIENT_STORAGE|MEDIA_UNAVAILABLE|DEVICE_OFFLINE|UPDATE_INCOMPATIBLE)/i,
   /daemon not running|cannot connect to daemon|adb server/i,
   /Connection refused|Connection reset by peer|Software caused connection abort/i,
-  /DEVICE_TEST_TIMEOUT/i,
+  /DEVICE_TEST_TIMEOUT|ADB_TIMEOUT/i,
 ];
 
 /** Failures that come from the generated application or its tests. */
@@ -236,6 +237,12 @@ export async function runAndroidDeviceGate({
   prepareDevice = prepareDeviceForTest, minimumFreeMb = 1536,
   wipeDevice = wipeAvdAfterTest,
 }) {
+  const runDeviceCommand = (command, args) => run(command, args, {
+    cwd: workspace,
+    ...(command === adbExecutable
+      ? { timeout: ADB_COMMAND_TIMEOUT_MS, timeoutLabel: 'ADB_TIMEOUT' } : {}),
+  });
+  const runAdb = args => runDeviceCommand(adbExecutable, args);
   const coverage = validateFlowCoverage(workspace, flows);
   const report = {
     version: 1, generated_at: new Date().toISOString(), status: 'FAIL',
@@ -246,7 +253,7 @@ export async function runAndroidDeviceGate({
   if (!adbExecutable) return { ...report, status: 'WAITING', reason: 'ADB bulunamadı.' };
   // Starts an emulator when none is connected and waits for boot completion.
   const acquired = await acquireDevice({
-    run: (command, args) => run(command, args, { cwd: workspace }),
+    run: runDeviceCommand,
     adb: adbExecutable,
     flutter: flutterExecutable,
   });
@@ -262,7 +269,7 @@ export async function runAndroidDeviceGate({
   report.device = device.id;
   const finish = async result => {
     const wiped = await wipeDevice({
-      run: (command, args) => run(command, args, { cwd: workspace }),
+      run: runDeviceCommand,
       adb: adbExecutable, device: device.id, workspace,
     });
     result.logs.avd_wipe = wiped.log || wiped.details || '';
@@ -278,7 +285,7 @@ export async function runAndroidDeviceGate({
   if (coverage.status !== 'PASS') return finish(productFailure(report));
 
   const prepared = await prepareDevice({
-    run: (command, args) => run(command, args, { cwd: workspace }),
+    run: runDeviceCommand,
     adb: adbExecutable, device: device.id, packageName, minimumFreeMb,
   });
   report.logs.device_storage = prepared.log || prepared.details || prepared.reason || '';
@@ -323,19 +330,19 @@ export async function runAndroidDeviceGate({
       ?? productFailure(report));
   }
 
-  await run(adbExecutable, ['-s', device.id, 'logcat', '-c'], { cwd: workspace });
-  const install = await run(adbExecutable, ['-s', device.id, 'install', '-r', '-t', apkPath], { cwd: workspace });
+  await runAdb(['-s', device.id, 'logcat', '-c']);
+  const install = await runAdb(['-s', device.id, 'install', '-r', '-t', apkPath]);
   report.logs.apk_install = outputOf(install);
   report.checks.apk_install = { status: install.status === 0 ? 'PASS' : 'FAIL', exit_code: install.status };
   if (install.status !== 0) {
     return finish(environmentWait(report, 'apk_install', report.logs.apk_install) ?? productFailure(report));
   }
-  await run(adbExecutable, ['-s', device.id, 'shell', 'am', 'force-stop', packageName], { cwd: workspace });
-  const launch = await run(adbExecutable, ['-s', device.id, 'shell', 'monkey', '-p', packageName,
-    '-c', 'android.intent.category.LAUNCHER', '1'], { cwd: workspace });
-  await run(adbExecutable, ['-s', device.id, 'shell', 'sleep', '2'], { cwd: workspace });
-  const pid = await run(adbExecutable, ['-s', device.id, 'shell', 'pidof', packageName], { cwd: workspace });
-  const logcat = await run(adbExecutable, ['-s', device.id, 'logcat', '-d', '-t', '800'], { cwd: workspace });
+  await runAdb(['-s', device.id, 'shell', 'am', 'force-stop', packageName]);
+  const launch = await runAdb(['-s', device.id, 'shell', 'monkey', '-p', packageName,
+    '-c', 'android.intent.category.LAUNCHER', '1']);
+  await runAdb(['-s', device.id, 'shell', 'sleep', '2']);
+  const pid = await runAdb(['-s', device.id, 'shell', 'pidof', packageName]);
+  const logcat = await runAdb(['-s', device.id, 'logcat', '-d', '-t', '800']);
   report.logs.launch = outputOf(launch);
   report.logs.logcat = outputOf(logcat);
   const fatal = /FATAL EXCEPTION|E\/flutter|Unhandled Exception/i.test(report.logs.logcat);
@@ -346,12 +353,12 @@ export async function runAndroidDeviceGate({
 
   const remoteScreenshot = '/sdcard/ai_mvp_device_smoke.png';
   const remoteUi = '/sdcard/ai_mvp_device_ui.xml';
-  await run(adbExecutable, ['-s', device.id, 'shell', 'screencap', '-p', remoteScreenshot], { cwd: workspace });
-  await run(adbExecutable, ['-s', device.id, 'shell', 'uiautomator', 'dump', remoteUi], { cwd: workspace });
+  await runAdb(['-s', device.id, 'shell', 'screencap', '-p', remoteScreenshot]);
+  await runAdb(['-s', device.id, 'shell', 'uiautomator', 'dump', remoteUi]);
   const logDir = path.join(workspace, 'QUALITY_LOGS');
   fs.mkdirSync(logDir, { recursive: true });
-  await run(adbExecutable, ['-s', device.id, 'pull', remoteScreenshot, path.join(logDir, 'DEVICE_SCREEN.png')], { cwd: workspace });
-  await run(adbExecutable, ['-s', device.id, 'pull', remoteUi, path.join(logDir, 'DEVICE_UI.xml')], { cwd: workspace });
+  await runAdb(['-s', device.id, 'pull', remoteScreenshot, path.join(logDir, 'DEVICE_SCREEN.png')]);
+  await runAdb(['-s', device.id, 'pull', remoteUi, path.join(logDir, 'DEVICE_UI.xml')]);
   report.status = Object.values(report.checks).every(check => check.status === 'PASS') ? 'PASS' : 'FAIL';
   if (report.status !== 'PASS') {
     return finish(environmentWait(report, 'launch', `${report.logs.launch}\n${report.logs.logcat}`)

@@ -175,7 +175,9 @@ saklanır. Her `DEVICE_REPORT.json` sonucu orchestrator-owned ayrı bir Git
 checkpoint'ine alınır; repair veya bağımlılık commit'lerine karışmaz. Integration
 test dosyaları birbirinden ayrı süreçlerde ve dosya başına 180 saniyelik sınırla
 çalışır. Windows'ta süre aşımı bütün Flutter/Dart süreç ağacını kapatır; takılan
-dosyanın yolu cihaz raporunda `failed_file` olarak görünür.
+dosyanın yolu cihaz raporunda `failed_file` olarak görünür. ADB hazırlık, install,
+launch, logcat, screenshot ve UI dump alt komutları da ortak 10 dakikalık process
+sınırını beklemez; 120 saniyelik `ADB_TIMEOUT` ile environment WAITING sonucuna döner.
 
 ADB yolu `ADB_BIN`, Android SDK platform-tools ve sistem PATH konumlarından sırayla
 aranır; LDPlayer'a özel yol veya entegrasyon kullanılmaz. Bağlı cihaz yoksa Studio
