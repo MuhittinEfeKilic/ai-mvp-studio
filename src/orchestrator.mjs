@@ -152,6 +152,32 @@ export function ensureProjectGitignore(workspace) {
   fs.writeFileSync(filePath, `${[...lines].join('\n')}\n`, 'utf8');
 }
 
+/**
+ * Offline apps must omit product networking permissions from the main manifest,
+ * but Flutter still needs INTERNET in debug/profile to discover the VM Service.
+ * Builders occasionally remove these tooling-only permissions, so restore them
+ * mechanically before any Flutter quality or device command is started.
+ */
+export function ensureFlutterToolingManifests(workspace) {
+  const changed = [];
+  for (const mode of ['debug', 'profile']) {
+    const relativePath = `android/app/src/${mode}/AndroidManifest.xml`;
+    const filePath = path.join(workspace, relativePath);
+    if (!fs.existsSync(filePath)) continue;
+    const manifest = fs.readFileSync(filePath, 'utf8');
+    if (manifest.includes('android.permission.INTERNET')) continue;
+    const next = manifest.replace(
+      /<manifest\b([^>]*)>/,
+      '<manifest$1>\n    <!-- Required only for Flutter tooling and VM Service discovery. -->\n'
+        + '    <uses-permission android:name="android.permission.INTERNET"/>',
+    );
+    if (next === manifest) continue;
+    fs.writeFileSync(filePath, next, 'utf8');
+    changed.push(relativePath);
+  }
+  return changed;
+}
+
 function branchAhead(workspace, branch) {
   return Boolean(git(workspace, ['log', '--oneline', `main..${branch}`]));
 }
@@ -592,12 +618,15 @@ export class Orchestrator {
       if (!fs.existsSync(planPath)) {
         await this.#runAgent({
           projectId, taskKey: 'coordinator', agentName: 'Coordinator Agent', role: 'coordinator', workspace,
-          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md, UX_SPEC.md, DATA_MODEL.md and TEST_STRATEGY.md when present. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create ${Math.max(2, minTasks)} to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum. The dependency graph must reach width ${targetParallelism}: at least ${targetParallelism} tasks must be runnable together with disjoint paths. Split by feature/module ownership, not by technical layer, and keep shared shell files with one owner. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, data-model, test-strategy, coordinator, integration, test, repair or reviewer. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow and acceptance criterion to a builder; require integration_test/<flow-name>_test.dart outputs that exercise real feature boundaries and persistence. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
+          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md, UX_SPEC.md, DATA_MODEL.md and TEST_STRATEGY.md when present. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create ${Math.max(2, minTasks)} to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum. The dependency graph must reach width ${targetParallelism}, and at least ${targetParallelism} tasks must have an empty depends_on array so the first builder wave starts at full concurrency with disjoint paths. Do not make a shared foundation task a prerequisite of every feature; assign contracts and shared files to explicit owners, then let Integration reconcile cross-feature seams. Split by feature/module ownership, not by technical layer, and keep shared shell files with one owner. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, data-model, test-strategy, coordinator, integration, test, repair or reviewer. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow and acceptance criterion to a builder; require integration_test/<flow-name>_test.dart outputs that exercise real feature boundaries and persistence. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
         });
         this.#commitArtifact(workspace, 'TASK_PLAN.json', 'docs: add coordinated task plan');
       }
       try {
-        readTaskPlan(workspace, { maxTasks: limit, minTasks, minParallelTasks: targetParallelism });
+        readTaskPlan(workspace, {
+          maxTasks: limit, minTasks, minParallelTasks: targetParallelism,
+          minInitialParallelTasks: targetParallelism,
+        });
         return;
       } catch (error) {
         this.database.addEvent(projectId, 'task_plan.rejected', {
@@ -607,7 +636,7 @@ export class Orchestrator {
         fs.rmSync(planPath, { force: true });
         git(workspace, ['add', 'TASK_PLAN.json']);
         if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: discard rejected task plan']);
-        correction = ` The previous TASK_PLAN.json was rejected: ${error.message} Produce a corrected plan with ${minTasks}-${limit} tasks and graph width ${targetParallelism}.`;
+        correction = ` The previous TASK_PLAN.json was rejected: ${error.message} Produce a corrected plan with ${minTasks}-${limit} tasks, graph width ${targetParallelism}, and at least ${targetParallelism} root tasks with empty depends_on arrays.`;
       }
     }
   }
@@ -621,6 +650,7 @@ export class Orchestrator {
       maxTasks: policy.maxTasks,
       minTasks: policy.minTasks,
       minParallelTasks: policy.targetParallelism,
+      minInitialParallelTasks: policy.targetParallelism,
     });
     const builders = plan.tasks.map(task => ({
       id: taskId(projectId, task.id), project_id: projectId, name: task.title,
@@ -650,7 +680,7 @@ export class Orchestrator {
       await this.#runAgent({
         projectId, taskKey: task.id, agentName: `Flutter Builder: ${task.name}`,
         role: 'flutter_builder', workspace: taskWorkspace,
-        prompt: `Read PROJECT_SPEC.md, ARCHITECTURE.md, UX_SPEC.md and TASK_PLAN.json. Complete only task "${task.name}". ${task.prompt}\nYou may modify only these paths: ${task.allowed_paths.join(', ')}. Required outputs: ${task.required_outputs.join(', ') || 'as specified'}. Do not edit planning documents or other task areas. Do not run flutter, dart, pub or Gradle commands; the orchestrator runs toolchain checks after integration. Perform only file-level or static task acceptance checks: ${task.acceptance_checks.join(', ') || 'relevant focused checks'}.`,
+        prompt: `Read PROJECT_SPEC.md, ARCHITECTURE.md, UX_SPEC.md and TASK_PLAN.json. Complete only task "${task.name}". ${task.prompt}\nYou may modify only these paths: ${task.allowed_paths.join(', ')}. Required outputs: ${task.required_outputs.join(', ') || 'as specified'}. Do not edit planning documents or other task areas. For an offline product, android/app/src/main/AndroidManifest.xml must omit INTERNET, while debug and profile manifests must retain android.permission.INTERNET for Flutter tooling and VM Service discovery. Do not run flutter, dart, pub or Gradle commands; the orchestrator runs toolchain checks after integration. Perform only file-level or static task acceptance checks: ${task.acceptance_checks.join(', ') || 'relevant focused checks'}.`,
       });
       const changed = getGitChangedPaths(taskWorkspace);
       const report = validateChangedPaths(changed, task.allowed_paths);
@@ -870,6 +900,13 @@ export class Orchestrator {
    * the whole event loop for that long, freezing every other project's agents.
    */
   async #runLocalFlutterChecks(workspace) {
+    const restoredToolingManifests = ensureFlutterToolingManifests(workspace);
+    if (restoredToolingManifests.length) {
+      git(workspace, ['add', ...restoredToolingManifests]);
+      if (gitChanged(workspace)) {
+        git(workspace, ['commit', '-m', 'fix: preserve Flutter tooling manifests']);
+      }
+    }
     if (this.flutterChecker) return this.flutterChecker(workspace);
     const skipped = details => ({ checks: {
       analyze: { status: 'SKIPPED', details }, test: { status: 'SKIPPED', details },
@@ -1313,7 +1350,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         this.#readyTasks(id, ['integration'], 1);
         await this.#runAgent({
           projectId: id, taskKey: 'integration', agentName: 'Integration Agent', role: 'integration', workspace,
-          prompt: `Inspect the merged Flutter task branches against PROJECT_SPEC.md, USER_FLOWS.json and TASK_PLAN.json. Resolve only concrete integration issues, including cross-feature ID/reference contracts and missing integration tests for critical flows. Keep planning documents unchanged and ensure the project structure is coherent. Do not run flutter, dart, pub or Gradle commands; the orchestrator runs all toolchain checks outside the agent sandbox. Do not expand scope or deploy.`,
+          prompt: `Inspect the merged Flutter task branches against PROJECT_SPEC.md, USER_FLOWS.json and TASK_PLAN.json. Resolve only concrete integration issues, including cross-feature ID/reference contracts and missing integration tests for critical flows. Keep planning documents unchanged and ensure the project structure is coherent. For an offline product, android/app/src/main/AndroidManifest.xml must omit INTERNET, while debug and profile manifests must retain android.permission.INTERNET for Flutter tooling and VM Service discovery. Do not run flutter, dart, pub or Gradle commands; the orchestrator runs all toolchain checks outside the agent sandbox. Do not expand scope or deploy.`,
         });
         git(workspace, ['add', '-A']);
         if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: integrate parallel Flutter tasks']);

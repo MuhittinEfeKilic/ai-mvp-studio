@@ -90,6 +90,23 @@ test('advanced policy enforces task count and real graph width', () => {
   }).tasks.length, 4);
 });
 
+test('advanced policy requires full concurrency in the first builder wave', () => {
+  const plan = { tasks: [
+    { id: 'foundation', allowed_paths: ['lib/foundation/**'], depends_on: [] },
+    { id: 'home', allowed_paths: ['lib/features/home/**'], depends_on: ['foundation'] },
+    { id: 'catalog', allowed_paths: ['lib/features/catalog/**'], depends_on: ['foundation'] },
+    { id: 'reports', allowed_paths: ['lib/features/reports/**'], depends_on: ['foundation'] },
+    { id: 'settings', allowed_paths: ['lib/features/settings/**'], depends_on: ['foundation'] },
+  ] };
+  assert.equal(taskGraphWidth(plan.tasks), 4);
+  assert.throws(
+    () => validateTaskPlan(plan, {
+      minTasks: 4, maxTasks: 8, minParallelTasks: 4, minInitialParallelTasks: 4,
+    }),
+    /ilk builder dalgasını seri bırakıyor/,
+  );
+});
+
 test('builders cannot own orchestrator files and dependencies are normalized', () => {
   const plan = parallelPlan();
   plan.tasks[0].allowed_paths = ['lib/app/**', 'pubspec.yaml'];

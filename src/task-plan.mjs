@@ -83,7 +83,7 @@ export function taskGraphWidth(tasks) {
  * three independent builders were serialised to x1.00 because one owned
  * `test/features/products/**` while another owned `test/features/products/detail/**`.
  */
-function assertParallelizable(tasks, minParallelTasks = 1) {
+function assertParallelizable(tasks, minParallelTasks = 1, minInitialParallelTasks = 1) {
   const conflicts = [];
   for (const [a, b] of concurrentTaskPairs(tasks)) {
     for (const left of a.allowed_paths) {
@@ -112,6 +112,14 @@ function assertParallelizable(tasks, minParallelTasks = 1) {
       + `gereken en az ${minParallelTasks}. Bağımsız ve ayrık path sahibi görevler oluşturun.`,
     );
   }
+  const initialTasks = tasks.filter(task => task.depends_on.length === 0).length;
+  if (initialTasks < minInitialParallelTasks) {
+    throw new Error(
+      `TASK_PLAN.json ilk builder dalgasını seri bırakıyor: başlangıçta ${initialTasks} görev, `
+      + `gereken en az ${minInitialParallelTasks}. Ortak foundation görevini bütün özelliklerin `
+      + 'önkoşulu yapmayın; sözleşmeleri sahiplerine dağıtıp bağımsız modülleri kökten başlatın.',
+    );
+  }
 }
 
 function normalizeTaskId(value) {
@@ -123,7 +131,9 @@ function normalizedPatterns(patterns) {
     .filter(value => value && !value.startsWith('/') && !value.includes('..'));
 }
 
-export function validateTaskPlan(rawPlan, { maxTasks = 5, minTasks = 1, minParallelTasks = 1 } = {}) {
+export function validateTaskPlan(rawPlan, {
+  maxTasks = 5, minTasks = 1, minParallelTasks = 1, minInitialParallelTasks = 1,
+} = {}) {
   const tasks = Array.isArray(rawPlan?.tasks) ? rawPlan.tasks : [];
   if (tasks.length < minTasks) throw new Error(`TASK_PLAN.json en az ${minTasks} görev içermeli.`);
   if (tasks.length > maxTasks) throw new Error(`TASK_PLAN.json en fazla ${maxTasks} görev içerebilir.`);
@@ -164,7 +174,7 @@ export function validateTaskPlan(rawPlan, { maxTasks = 5, minTasks = 1, minParal
     }
   }
   assertAcyclic(normalized);
-  assertParallelizable(normalized, minParallelTasks);
+  assertParallelizable(normalized, minParallelTasks, minInitialParallelTasks);
   return {
     version: 1,
     profile: rawPlan.profile || 'flutter_mobile',

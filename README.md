@@ -101,9 +101,11 @@ Test Strategy aynı anda çalışır. Coordinator bu belgeleri birleştirerek do
 çalıştırır ve biten görevin slotunu hemen serbest bırakır. Plan sözleşmesi
 paralelliği zorunlu kılar: birbirine bağlı olmayan görevler aynı yolları
 sahiplenemez (iç içe yollar da çakışma sayılır); v2 planlarında görev sayısı ve
-grafik genişliği spec'teki profile göre mekanik olarak doğrulanır. Reviewer, cihaz kapısı APK'yı çalıştırırken eş
-zamanlı olarak incelemesini yapar. Integration, Flutter Test, koşullu Repair ve Mobile Reviewer aşamaları
-bu grafiğin devamında çalışır.
+grafik genişliği spec'teki profile göre mekanik olarak doğrulanır. Ayrıca hedef
+paralellik kadar görevin ilk dalgada bağımsız başlaması gerekir; tek foundation
+görevinden sonra genişleyen planlar reddedilir. Reviewer, cihaz kapısı APK'yı
+çalıştırırken eş zamanlı olarak incelemesini yapar. Integration, Flutter Test,
+koşullu Repair ve Mobile Reviewer aşamaları bu grafiğin devamında çalışır.
 
 ## Checkpoint ve devam sistemi
 
@@ -156,6 +158,11 @@ kaynak teşhis kontrolü, üretilen koddaki boş veya hatayı yutan `catch` blok
 bloklayıcı hata sayar; hata ya incelenmeli ya yeniden fırlatılmalıdır. Teknik başarı projeyi
 `awaiting_user_review` durumuna getirir; kullanıcı panelden APK'yı indirebilir, ürünü
 kabul edebilir veya hedefli bir Feedback Repair turu başlatabilir.
+
+Çevrimdışı bir ürünün `android/app/src/main/AndroidManifest.xml` dosyası ağ izni
+taşımaz. Flutter test sürücüsünün VM Service'e bağlanabilmesi için debug/profile
+manifestlerindeki tooling-only `INTERNET` izni kalite kapısından önce mekanik ve
+idempotent biçimde korunur.
 
 Mobil spec'te `device_test: "required"` ise teknik kontrolden sonra Android cihaz
 kapısı çalışır. Aynı kapı kullanıcı geri bildirimi turundan sonra da işler; teknik

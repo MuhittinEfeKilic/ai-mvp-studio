@@ -3,7 +3,7 @@
 Son güncelleme: 7 Eylül 2026
 
 Bu listedeki doğrulanmış açıklar kapatılmıştır. Son tam kontrol: `npm run check`
-başarılı, `npm test` **100/100 PASS**.
+başarılı, `npm test` **102/102 PASS**.
 
 Bu liste, güncel mimari ve test incelemesinde doğrulanan işleri içerir. Maddeler
 öncelik sırasındadır. Bir madde tamamlandığında ilgili regresyon testi eklenmeli,
@@ -12,11 +12,11 @@ güncellenmelidir.
 
 ## P1 — İlk builder dalgasında gerçek paralelliği zorunlu kıl
 
-- [ ] Advanced task planında yalnız toplam grafik genişliğini değil, bağımlılığı
+- [x] Advanced task planında yalnız toplam grafik genişliğini değil, bağımlılığı
   olmayan başlangıç görevlerinin sayısını da `target_parallelism` ile doğrula.
-- [ ] Coordinator prompt'unda ortak domain sözleşmelerini tek bir seri foundation
+- [x] Coordinator prompt'unda ortak domain sözleşmelerini tek bir seri foundation
   görevine yığmak yerine feature sahiplerine veya orchestrator iskeletine dağıt.
-- [ ] Tek root görevinden sonra genişleyen planın reddedildiğini gösteren regresyon
+- [x] Tek root görevinden sonra genişleyen planın reddedildiğini gösteren regresyon
   testi ekle.
 
 ### Bulgu
@@ -25,6 +25,22 @@ Gerçek `Akış Cep` koşusundaki ilk advanced plan 6 görev ve grafik genişli�
 validator'dan geçti; ancak beş feature görevinin tamamı `shared-foundation` görevine
 bağlı olduğu için ilk builder dalgası yalnız x1 çalıştı. Plan sonradan paralelleşse
 de ortak temel iş kritik yola seri gecikme ekliyor.
+
+## P1 — Flutter tooling manifestlerini çevrimdışı ürün politikasından ayır
+
+- [x] Offline ürünlerde `main` manifestin ağ izni taşımaması kuralını koru.
+- [x] Flutter VM Service için gereken debug/profile `INTERNET` izinlerini kalite
+  ve cihaz kapısından önce mekanik olarak geri yükle.
+- [x] Builder ve Integration prompt'larında ürün izni ile tooling izninin farkını
+  açıkça belirt.
+- [x] Main manifesti değiştirmeden debug/profile manifestlerini onaran idempotent
+  regresyon testi ekle.
+
+### Bulgu
+
+Gerçek `Akış Cep` koşusunda agent, çevrimdışı ürün gereksinimini debug/profile
+manifestlerine de uyguladı. APK kurulmasına rağmen Flutter test sürücüsü VM Service
+portuna bağlanamadı ve ilk integration test 180 saniye sonunda zaman aşımına uğradı.
 
 ## P1 — Kompleks ürün template'i ve ölçeklenen paralel planlama
 

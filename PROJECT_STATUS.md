@@ -1,6 +1,6 @@
 # AI MVP Studio — Güncel Durum ve Handoff
 
-Son güncelleme: 7 Eylül 2026
+Son güncelleme: 9 Eylül 2026
 
 ### Son cihaz ortamı kararı
 
@@ -25,13 +25,15 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **100/100 test** (7 Eylül 2026). Tam paket Windows üzerinde
-  takılmadan tamamlandı; v2 spec/policy ve advanced paralel planlama regresyonları geçti.
+- Studio regresyonu: **102/102 test** (9 Eylül 2026). Tam paket Windows üzerinde
+  takılmadan tamamlandı; ilk builder dalgası ve Flutter tooling manifesti
+  regresyonları da geçti.
 
 ### Projeler
 
 | Kimlik | Ad | Durum | Ne kanıtlıyor |
 | --- | --- | --- | --- |
+| `1d95246c0382` | Akış Cep | `awaiting_user_review` | Advanced v2 gerçek koşu; 47/47 kalite testi, debug APK, 6/6 emülatör akışı ve reviewer PASS. Device repair, düzenlenen rutin snapshot kusurunu yakalayıp düzeltti |
 | `7b6df59adcb9` | Ders Notu (2. koşu) | `awaiting_user_review` | Yeni sözleşmelerin ilk gerçek doğrulaması; tek incelemede temiz geçti |
 | `c67140223074` | Ders Notu (1. koşu) | `awaiting_user_review` | İlk tam uçtan uca başarı; cihaz kapısı PASS; feedback turu gerçek kusuru düzeltti |
 | `f87128fb48bf` | Bakım Takvimi | `interrupted` | Beş cihaz akışından dördü tamamlandıktan sonra Studio yeniden başlatıldığı için checkpoint'te durdu; son ölçümde 4973 MB boş alan vardı |
@@ -73,6 +75,9 @@ bir kez daha** istenir:
   göreve verilemez.
 - Üç veya daha fazla görevli legacy plan tamamen seri olamaz; v2 planları ayrıca
   profile özgü minimum görev sayısı ve grafik genişliğini geçmek zorundadır.
+- V2 planında yalnız sonraki bir seviyenin geniş olması yetmez;
+  `target_parallelism` kadar root görev ilk builder dalgasında hazır olmalıdır.
+  Tek foundation görevine bağlanan geniş fan-out planlar reddedilir.
 - Hiçbir görev `pubspec.yaml`/`pubspec.lock` sahiplenemez; paketler plandaki
   `dependencies` alanında bildirilir, orchestrator `flutter pub add` ile kurar.
 - Döngüsel bağımlılık reddedilir (eskiden scheduler'ı kilitlerdi).
@@ -132,7 +137,8 @@ Bunlar tartışıldı ve bilerek böyle bırakıldı. Değiştirmeden önce nede
 - **Toolchain dosyaları ürün kapsamı dışıdır:** `android/app/src/debug/**`,
   `android/app/src/profile/**`, üretilmiş dosyalar, `test/scaffold_test.dart`.
   Debug manifesti INTERNET iznini meşru olarak taşır; ürün izinleri yalnız
-  `android/app/src/main/AndroidManifest.xml`'dedir.
+  `android/app/src/main/AndroidManifest.xml`'dedir. Kalite kapısı debug/profile
+  manifestlerinde VM Service için gereken izni eksikse idempotent biçimde geri yükler.
 - **build-tools sürümü sabitlenmedi.** Bir kez görülen `aapt` çöküşü geçiciydi;
   preflight sağlık kontrolü kalıcı bir bozulmayı zaten yakalar.
 - **`analyze` ve `test` paralelleştirilmedi.** Ölçüm analyze'ı 1.8s gösterdi;

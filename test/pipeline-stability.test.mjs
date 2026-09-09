@@ -5,7 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  builderTaskPolicy, ensureProjectGitignore, qualityFailureSignature, runFlutterAsync,
+  builderTaskPolicy, ensureFlutterToolingManifests, ensureProjectGitignore,
+  qualityFailureSignature, runFlutterAsync,
 } from '../src/orchestrator.mjs';
 
 test('builder policy scales v2 advanced specs without changing legacy limits', () => {
@@ -39,6 +40,32 @@ test('project gitignore preserves custom rules and adds generated Flutter paths'
   assert.ok(lines.includes('build/'));
   assert.ok(lines.includes('QUALITY_LOGS/'));
   assert.equal(lines.length, new Set(lines).size);
+});
+
+test('Flutter tooling manifests retain VM Service permission without changing main', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-manifests-'));
+  const manifest = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n</manifest>\n';
+  for (const mode of ['main', 'debug', 'profile']) {
+    const directory = path.join(workspace, 'android', 'app', 'src', mode);
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'AndroidManifest.xml'), manifest);
+  }
+
+  assert.deepEqual(ensureFlutterToolingManifests(workspace), [
+    'android/app/src/debug/AndroidManifest.xml',
+    'android/app/src/profile/AndroidManifest.xml',
+  ]);
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(workspace, 'android/app/src/main/AndroidManifest.xml'), 'utf8'),
+    /android\.permission\.INTERNET/,
+  );
+  for (const mode of ['debug', 'profile']) {
+    assert.match(
+      fs.readFileSync(path.join(workspace, `android/app/src/${mode}/AndroidManifest.xml`), 'utf8'),
+      /android\.permission\.INTERNET/,
+    );
+  }
+  assert.deepEqual(ensureFlutterToolingManifests(workspace), []);
 });
 
 test('a hung Flutter command times out without retaining the pipeline slot', async () => {
