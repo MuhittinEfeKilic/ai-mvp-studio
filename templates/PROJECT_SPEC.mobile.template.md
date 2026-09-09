@@ -14,8 +14,19 @@ complexity_tier: "advanced"
 target_parallelism: "4"
 design_mode: "guided"
 language: "tr"
+version_name: "1.0.0"
+version_code: "1"
+short_description: "KISA ÜRÜN AÇIKLAMASI"
+release_notes: ""
 status: "draft"
 ---
+
+<!--
+`version_name`, `version_code`, `short_description` ve `release_notes` isteğe
+bağlıdır ve yalnız release hazırlık değerlendirmesinde kullanılır. Sürüm için
+`pubspec.yaml` yetkilidir; buradaki değerle uyuşmazlık engel değil, uyarıdır.
+-->
+
 
 # Ürün Özeti
 

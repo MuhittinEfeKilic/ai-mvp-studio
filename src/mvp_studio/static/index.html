@@ -468,6 +468,7 @@
       return JSON.stringify([
         project.id, project.status, project.error, project.final_message,
         project.quality_report, project.device_report, project.artifact_path,
+        project.release_report, project.release_evaluating,
         (project.tasks || []).map(task => [task.id, task.status, task.attempt_count, task.error]),
         (project.agent_runs || []).map(run => [run.id, run.status, run.output_tokens, run.context_chars]),
         (project.events || []).length,
@@ -576,6 +577,7 @@
       const out = runs.reduce((sum, run) => sum + Number(run.output_tokens || 0), 0);
       const quality = project.quality_report ? JSON.parse(project.quality_report) : null;
       const device = project.device_report ? JSON.parse(project.device_report) : null;
+      const release = project.release_report ? JSON.parse(project.release_report) : null;
       const verdict = lastVerdict(runs);
 
       const checkRow = (name, check) => `
@@ -643,6 +645,32 @@
         <div class="card section-gap">
           <h3>İnceleme notları <span class="right">engelleyici değil</span></h3>
           <div class="card-body"><pre class="log">${esc(verdict.notes.map(note => `• ${note}`).join('\n'))}</pre></div>
+        </div>` : ''}
+
+        ${project.status === 'accepted' || release ? `
+        <div class="card section-gap">
+          <h3>Release hazırlığı <span class="right">${release ? esc(release.status) : '—'}</span></h3>
+          <div class="card-body">
+            ${release ? `
+              <dl class="kv">
+                <dt>Kimlik</dt><dd class="mono">${esc(release.identity.application_id || '—')}</dd>
+                <dt>Ad</dt><dd>${esc(release.identity.display_name || '—')}</dd>
+                <dt>Sürüm</dt><dd class="mono">${esc(release.identity.version_name || '—')}+${esc(String(release.identity.version_code ?? '—'))}</dd>
+                ${release.artifact ? `<dt>Artefakt</dt><dd class="mono">${esc(release.artifact.path)} · ${num(release.artifact.size_bytes)} bayt</dd>
+                <dt>SHA-256</dt><dd class="mono" style="word-break:break-all">${esc(release.artifact.sha256)}</dd>` : ''}
+                <dt>İmza</dt><dd>${esc(release.signing.details)}</dd>
+              </dl>
+              ${release.blockers.length ? `<div class="notice err section-gap"><strong>Engeller:</strong>
+                <pre class="log">${esc(release.blockers.map(item => `• ${item.title}: ${item.details}`).join('\n'))}</pre></div>` : ''}
+              ${release.warnings.length ? `<div class="notice warn section-gap"><strong>Uyarılar (engelleyici değil):</strong>
+                <pre class="log">${esc(release.warnings.map(item => `• ${item.title}: ${item.details}`).join('\n'))}</pre></div>` : ''}
+            ` : '<div class="dim">Henüz değerlendirme yapılmadı.</div>'}
+            ${project.status === 'accepted' ? `<div class="row" style="margin-top:10px">
+              <button class="btn" data-act="release" ${project.release_evaluating ? 'disabled' : ''}>
+                ${project.release_evaluating ? 'Release derlemesi çalışıyor…' : (release ? 'Yeniden değerlendir' : 'Release hazırlığını değerlendir')}
+              </button>
+            </div>` : ''}
+          </div>
         </div>` : ''}
 
         ${project.final_message ? `
@@ -838,6 +866,12 @@
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }),
           }));
         };
+      }
+      const release = document.querySelector('[data-act="release"]:not([disabled])');
+      if (release) {
+        release.onclick = () => act(release, () => api(
+          `/api/projects/${selectedId}/release-readiness`, { method: 'POST' },
+        ));
       }
       for (const node of document.querySelectorAll('[data-act="retry"]')) {
         node.onclick = () => act(node, () => api(

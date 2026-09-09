@@ -25,6 +25,10 @@ Claude entegrasyonu henüz kapsam dışıdır.
   orchestrator merkezi olarak çalıştırır.
 - Bir projeyi yalnız analyze/test/APK PASS olduğu için kullanıcı akışları çalışıyor
   kabul etmeyin. Cihaz/E2E doğrulaması yapılmadıysa bunu açıkça belirtin.
+- Release hazırlığı yalnız `accepted` projelerde çalışır, proje durumunu değiştirmez
+  ve deterministiktir; bir modele "hazır görünüyor mu" diye sorulmaz. `READY` yalnız
+  **sideload ile harici teste verilebilir** demektir. Hiçbir yerde mağaza hazırlığı
+  iddia etmeyin, imza anahtarı üretmeyin, parola/keystore saklamayın.
 - Kapılar yetkilidir: `TEST_REPORT.json` ve `DEVICE_REPORT.json` sonuçları yeniden
   yargılanmaz. Reviewer yalnız `ACCEPTANCE_CRITERIA.json` maddeleri üzerinden
   bloklayabilir; doğrulanamayan gözlem `notes` alanına yazılır.
@@ -63,6 +67,7 @@ Claude entegrasyonu henüz kapsam dışıdır.
 - Kalite ve inceleme sözleşmesi: `src/quality-report.mjs`
 - Kaynak teşhis taraması: `src/source-diagnostics.mjs`
 - Cihaz kapısı: `src/device-tester.mjs`, `src/android-environment.mjs`
+- Release hazırlığı: `src/release-readiness.mjs`
 - Rol bazlı context: `src/context-packager.mjs`
 
 Yeni davranış mümkünse saf, export edilen bir yardımcı fonksiyonla ayrıştırılmalı ve

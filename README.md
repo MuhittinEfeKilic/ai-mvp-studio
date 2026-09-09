@@ -23,9 +23,11 @@ Optimize edilen şeyler, sırayla:
 - arızadan **hızlı kurtarma**,
 - ve nihayetinde **gerçek pazar doğrulamasına** ulaşma hızı.
 
-Bu döngünün bugün uygulanmış kısmı **"fikir → doğrulanmış MVP"**dir. Sağ taraf
-(yayınlanabilir artefakt, gerçek kullanıcı, ölçüm) henüz yazılmadı — aşağıdaki
-[Bugün ne var, ne yok](#bugün-ne-var-ne-yok) bölümüne bakın.
+Bu döngünün bugün uygulanmış kısmı **"fikir → doğrulanmış MVP → ölçülmüş
+yayınlanabilirlik"**tir. Kabul edilmiş bir projenin harici bir kullanıcıya
+verilmeye teknik olarak hazır olup olmadığı deterministik biçimde ölçülür; **ama
+yayınlama otomasyonu yoktur.** Gerçek kullanıcı ve pazar ölçümü tarafı henüz
+yazılmadı — aşağıdaki [Bugün ne var, ne yok](#bugün-ne-var-ne-yok) bölümüne bakın.
 
 Studio'nun kendisi yayınlanmaz. Ürettiği uygulamalar, kullanıcı kararıyla ayrıca
 yayınlanabilir.
@@ -46,13 +48,15 @@ yayınlanabilir.
 - Deterministik süreç timeout'u ve process-tree sonlandırma
 - Bloklamayan Flutter/Android toolchain yürütmesi
 - Çalışma başına token bütçesi ve Git checkpoint tabanlı devam ettirme
+- Deterministik release hazırlık değerlendirmesi ve `RELEASE_READINESS.json` raporu
 
 **Henüz uygulanmadı** (bu repository'de kodu yok)
 
-- Release derlemesi, imzalama, keystore yönetimi — üretilen tek artefakt **debug APK**'dır
-- Mağaza veya dağıtım otomasyonu
-- Analitik, ölçüm veya deney sözleşmeleri
-- Deployment otomasyonu
+- İmzalama anahtarı üretimi/yönetimi, keystore veya parola saklama
+- Mağaza yükleme, store listing üretimi, Play App Signing
+- Dağıtım/deployment otomasyonu
+- Analitik, crash reporting, faturalama
+- Deney sözleşmeleri veya pazar deneyi panoları
 - Claude entegrasyonu (bilinçli olarak kapsam dışı)
 
 ## Deterministik olan ve olmayan
@@ -69,6 +73,7 @@ doğrulanır ve bir agent'ın ikna kabiliyetine bağlı değildir.
 | Cihaz kapısının akış kapsamı, kurulum, açılış ve senaryo sonuçları | Onarım turlarında yapılan düzeltmelerin isabeti |
 | Reviewer çıktısının şekli, kriter kimliklerinin sınırı, bloklama yetkisi | Reviewer'ın kriterler içindeki kanaati |
 | Onarım turu üst sınırları ve aynı-imza erken durması | — |
+| Release hazırlığı: kimlik, sürüm, artefakt varlığı/boyutu/SHA-256, imza durumu | — |
 | Timeout, süreç ağacı sonlandırma, token bütçesi, checkpoint/resume | — |
 
 Kapılar **yetkilidir**: reviewer `TEST_REPORT.json` ve `DEVICE_REPORT.json`
@@ -134,6 +139,13 @@ Cihaz kapısı: hedef sınıflandırma · akış kapsamı · depolama
 Mobile Reviewer (cihaz kapısıyla eşzamanlı başlar) ──FAIL──→ Review Repair × 2
         ↓
 awaiting_user_review ─→ kullanıcı kabul eder veya geri bildirim turu başlatır
+        ↓ (accepted)
+Release hazırlığı  (elle tetiklenir, proje durumunu değiştirmez)
+  kimlik · sürüm · simge · geliştirme adresi ──engel──→ BLOCKED (derleme atlanır)
+        ↓
+  flutter build apk --release · artefakt · SHA-256 · imza durumu
+        ↓
+  RELEASE_READINESS.json  →  READY (sideload) veya BLOCKED
 ```
 
 Her onarım döngüsü sınırlıdır ve aynı hata imzası tekrarlarsa erkenden durur. Kod
@@ -268,7 +280,53 @@ Reviewer bloklarsa en fazla iki hedefli Review Repair turu uygulanır; her turda
 kalite ve cihaz kapıları yeniden koşar. Bulgular değişmezse döngü durur ve gerekçeler
 proje hatasına yazılır.
 
-## Çalışma zamanı garantileri
+## Release hazırlığı
+
+Ürün doğrulaması bittikten **sonra** cevaplanan tek bir soru: *bu MVP gerçek bir
+harici kullanıcıya release adayı olarak verilmeye teknik olarak hazır mı?*
+Değerlendirme yalnız `accepted` durumundaki projelerde, panelden elle tetiklenir ve
+**proje durumunu değiştirmez** — sonucu `RELEASE_READINESS.json` olarak üretilen
+repository'ye yazılır ve projeye iliştirilir. Bu, hattın hiçbir mevcut semantiğine
+dokunmadan eklenen ayrı bir ölçümdür.
+
+Değerlendirme tamamen deterministiktir; hiçbir modele "hazır görünüyor mu" diye
+sorulmaz. Her bulgu üretilen projeden veya gerçek bir release derlemesinden okunan
+bir olgudur.
+
+**Metadata sözleşmesi.** Yeni bir girdi dosyası yoktur. `PROJECT_SPEC.md` *niyetin*
+tek kaynağı olarak kalır (`project_name`, `package_name` ve isteğe bağlı
+`version_name`, `version_code`, `short_description`, `release_notes`); üretilen
+Flutter/Android dosyaları *gerçekte ne inşa edildiğinin* yetkili kaynağıdır
+(`build.gradle[.kts]` → `applicationId`, `AndroidManifest.xml` → `android:label`,
+`pubspec.yaml` → `version`). Rapor ikisini de kaydeder ve uyuşmazlığı bildirir;
+aynı değer üçüncü bir yerde yeniden tanımlanmaz.
+
+| Şiddet | Anlamı |
+| --- | --- |
+| **blocker** | Mekanik olarak doğrulanabilir, tek cümleyle savunulabilir bir olgu; artefaktı harici kullanıcı için kullanılamaz veya yanlış kimlikli yapar. Durum `BLOCKED`. |
+| **warning** | Gerçek bir eksik, ama APK'yı bir test kullanıcısına vermeyi engellemez. Durumu **asla** değiştirmez. |
+| **info** | Kaydedilen olgu; yargı yok (izinler, dışa açık bileşenler). |
+
+Çalışan kontroller: uygulama kimliğinin geçerliliği ve örnek/şablon değeri olmaması,
+kimliğin spec ile uyuşması, uygulama adının tanımlı ve çözülmüş olması, sürümün
+`pubspec.yaml` üzerinden çözülebilmesi, spec sürüm uyuşmazlığı (uyarı), ürün
+açıklamasının iskelet varsayılanı olmaması (uyarı), launcher simgesinin manifest
+referansından çözülmesi, `lib/` içinde localhost/loopback adresi kalmaması, release
+derlemesinin üretilebilmesi, artefaktın var ve boyutunun sıfırdan büyük olması,
+SHA-256 özeti, imza durumu (uyarı), istenen izinler ve dışa açık bileşenler (bilgi).
+
+Kimlik/yapılandırma engelleri varsa release derlemesi hiç çalıştırılmaz; dakikalarca
+sürecek bir Gradle derlemesi zaten bilinen bir engel için harcanmaz.
+
+**"Release Ready" ne demek, ne demek değil.** Bu ilk sürümde `READY`, şu anlama
+gelir: kimlik tutarlı, gerçek bir release APK üretildi, dosya var, boş değil ve
+sha256'sı kayıtlı — yani **sideload ile harici bir test kullanıcısına verilebilir.**
+Şu anlama **gelmez:** mağaza dağıtımına hazır. Flutter şablonu release derlemesini
+debug anahtarıyla imzalar; rapor bunu `signing.state: "debug_signing"` ve
+`store_distribution_verified: false` olarak açıkça bildirir. Studio imza anahtarı
+üretmez, parola/keystore saklamaz, Play App Signing yapılandırmaz ve hiçbir koşulda
+"mağazaya hazır" demez. Dağıtıma giden kalan yol — üretim imzası, mağaza kaydı,
+listeleme — henüz yazılmadı.
 
 **Bloklamayan yürütme.** Flutter, Gradle, adb ve aapt komutlarının **tamamı** ortak
 asenkron süreç çalıştırıcısından geçer. Orchestration hot path'inde senkron toolchain
@@ -366,16 +424,40 @@ npm run check
 npm test
 ```
 
-`npm run check` 15 birinci taraf `src/*.mjs` modülünün sözdizimini denetler. `npm test`
-**121 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
+`npm run check` 16 birinci taraf `src/*.mjs` modülünün sözdizimini denetler. `npm test`
+**142 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
 worktree/path izolasyonu, checkpoint, kalite ve inceleme sözleşmeleri, kaynak teşhis
 taraması, cihaz kapısı, cihaz hedefi sınıflandırması, emülatör otomasyonu, süreç timeout
-semantiği, event loop canlılığı ve orchestrator davranışlarını kapsar.
+semantiği, event loop canlılığı, release hazırlık değerlendirmesi ve orchestrator
+davranışlarını kapsar.
 
-**Son doğrulama kanıtı (9 Eylül 2026):** `npm run check` başarılı; tam paket **121/121
-PASS**, arka arkaya on tam koşuda sıfır başarısızlık. Timeout/stability testleri ayrıca
-30 kez koşuldu, sıfır flake. Gerçek Windows toolchain'inde `flutter --version` asenkron
-yoldan 2465 ms sürdü ve bu süre boyunca event loop 235 kez tick attı.
+Tüm testler Codex'i taklit eder. Gerçek Codex'e dokunan tek ucuz kontrol ayrı tutulur:
+
+```powershell
+npm run test:minimal-live
+```
+
+Bu betik Architecture, UX, Coordinator, Integration ve Reviewer aşamalarını yerel
+fixture'larla simüle eder; yalnız duraklamadan sonra devam eden Builder aşaması gerçek
+bir Codex çağrısı yapar ve tek bir `index.html` üretir. Böylece checkpoint/resume
+akışı, plan sözleşmesi, kalite kapısı ve inceleme sözleşmesi tek bir gerçek çağrı
+maliyetiyle uçtan uca doğrulanır. Bitince ölçülen token kullanımını yazar.
+
+**Son doğrulama kanıtı (9 Eylül 2026):** `npm run check` başarılı; tam paket **142/142
+PASS**. Timeout/stability testleri ayrıca
+30 kez koşuldu, sıfır flake. `npm run test:minimal-live` uçtan uca PASS: tek gerçek
+Codex çağrısı, 33.592 giriş / 16.512 cache / 194 çıkış tokenı (**17.274
+faturalanabilir**), proje `accepted` durumuna ulaştı. Gerçek Windows toolchain'inde
+`flutter --version` asenkron yoldan 2465 ms sürdü ve bu süre boyunca event loop 235 kez
+tick attı.
+
+**Gerçek Flutter release kanıtı (9 Eylül 2026):** `Akış Cep` (`1d95246c0382`)
+üzerinde gerçek bir `flutter build apk --release` koşuldu. Sonuç `READY`: 98 saniye,
+`com.aimvpstudio.akiscep` · Akış Cep · 1.0.0+1, 55.838.362 baytlık APK,
+sha256 `b382a7a1…` (bağımsız olarak yeniden hesaplanıp doğrulandı), 0 engel,
+2 uyarı (`product_description` iskelet varsayılanı, `signing` debug anahtarı).
+Bu **gerçek toolchain kanıtıdır**; testlerdeki diğer release senaryoları enjekte
+edilmiş derlemelerle çalışan simülasyondur.
 
 Uçtan uca hat gerçek koşularda kanıtlanmıştır; ölçümler ve proje bazlı kanıtlar
 [PROJECT_STATUS.md](PROJECT_STATUS.md) dosyasındadır.
@@ -385,11 +467,14 @@ modüllerini kullanır. Runtime verileri `data/` ve `projects/` altında tutulur
 
 ## Bilinen sınırlar
 
-- **Yayınlanabilir artefakt yok.** Hat debug APK ile biter; release derlemesi, imzalama
-  ve dağıtım henüz yazılmadı. Döngünün "gerçek kullanıcı → ölçüm" tarafı da yok.
-- **`npm run test:minimal-live` bozuk.** Betiğin yerel reviewer fixture'ı güncel inceleme
-  sözleşmesini karşılamıyor (`INVALID_REVIEWER_RESULT`), bu yüzden betik tamamlanmıyor.
-  `npm test` etkilenmez.
+- **Üretim imzası yok.** Release APK, Flutter şablonunun debug anahtarıyla imzalanır:
+  sideload testi için yeterli, mağaza dağıtımı için değil. Studio anahtar üretmez ve
+  saklamaz.
+- **Yayınlama otomasyonu yok.** Hazırlık ölçülür, dağıtım yapılmaz. Döngünün
+  "gerçek kullanıcı → ölçüm" tarafı henüz yazılmadı.
+- **Release değerlendirmesi yeniden başlatmaya dayanıklı değil.** Studio değerlendirme
+  sırasında kapanırsa koşu kaybolur; proje durumu değişmediği için zararsızdır,
+  panelden yeniden tetiklenir.
 - **Review Repair ve önceki bulgu hafızası gerçek koşuda tetiklenmedi**; yalnız birim
   testleriyle korunuyor.
 - **Eski örnek projeler güncel sözleşmelerin gerisinde.** Ayrıntı ve proje bazlı durum
@@ -410,6 +495,7 @@ modüllerini kullanır. Runtime verileri `data/` ve `projects/` altında tutulur
 | `src/quality-report.mjs` | Kalite raporu ve inceleme sözleşmesi doğrulaması |
 | `src/source-diagnostics.mjs` | Üretilen Dart kaynağında sessiz hata yutma taraması |
 | `src/device-tester.mjs` | Cihaz kapısı, arıza sınıflandırması, hata imzası |
+| `src/release-readiness.mjs` | Deterministik release hazırlık değerlendirmesi ve rapor |
 | `src/android-environment.mjs` | Cihaz hedefi tespiti, emülatör başlatma, AVD temizliği, build-tools sağlığı |
 | `src/context-packager.mjs` | Rol bazlı context paketleri |
 | `src/config.mjs` | Ortam değişkenleri ve varsayılan ayarlar |

@@ -8,10 +8,14 @@ Studio kişisel bir startup/MVP fabrikasıdır; hedef döngü **fikir → çalı
 yayınlanabilir MVP → gerçek kullanıcı → ölçülebilir geri bildirim → KILL / ITERATE /
 SCALE**. Amacı ve optimize ettiği şeyler [README](README.md) başında anlatılır.
 
-Bugün uygulanmış olan kısım döngünün **sol tarafıdır: fikir → doğrulanmış MVP.**
-Hat, onaylanmış bir spec'ten kalite ve cihaz kapılarını geçmiş, incelenmiş bir debug
-APK üretir. Sağ taraf — yayınlanabilir artefakt, gerçek kullanıcı, ölçüm — henüz
-yazılmadı ve bu dosyada var gibi anlatılmamalıdır.
+Bugün uygulanmış olan kısım **fikir → doğrulanmış MVP → ölçülmüş
+yayınlanabilirlik**tir. Hat, onaylanmış bir spec'ten kalite ve cihaz kapılarını
+geçmiş, incelenmiş bir uygulama üretir; kabul edilmiş bir projede release hazırlığı
+deterministik olarak ölçülür ve gerçek bir release APK üretilir.
+
+**Yayınlama otomasyonu yoktur.** İmza anahtarı üretimi, mağaza yükleme, dağıtım,
+analitik ve deney sözleşmeleri hâlâ yazılmadı ve bu dosyada var gibi
+anlatılmamalıdır. Ölçülen şey yayınlanabilirlik; yapılan şey yayınlama değil.
 
 ### Cihaz hedefi politikası
 
@@ -56,10 +60,10 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **121/121 test**, arka arkaya on tam koşuda sıfır
-  başarısızlık. Cihaz temizliği ayrımı, cihaz hedefi sınıflandırması, AVD adı
-  fallback'i, reviewer sözleşme düzeltmesi, Codex stdin arızası, bayat APK yedeği
-  kurtarması, deterministik process timeout'u ve event loop canlılığı kapsanır.
+- Studio regresyonu: **142/142 test**. Cihaz temizliği ayrımı, cihaz hedefi
+  sınıflandırması, AVD adı fallback'i, reviewer sözleşme düzeltmesi, Codex stdin
+  arızası, bayat APK yedeği kurtarması, deterministik process timeout'u, event loop
+  canlılığı ve release hazırlık değerlendirmesi kapsanır.
 - **Hiçbir toolchain komutu event loop'u bloke etmez.** Flutter, Gradle, adb ve
   aapt çağrılarının tamamı `async-process-runner` üzerinden çalışır; orchestrator
   içinde senkron kalan tek şey yerel Git plumbing'idir.
@@ -318,13 +322,7 @@ kaydırma konumu korunur. Olay uç noktası son 400 olayı döndürür.
    akış eklemek yerine güncel spec'le yeniden üretmek doğru yol. `Stok Cep` eski
    cihaz koşusunun başarısız kaydıdır; yeniden deneme öncesinde güncel ortam kapısı
    ve stabil Android build-tools ile değerlendirilmelidir.
-4. **`npm run test:minimal-live` bozuk.** `scripts/minimal-live-check.mjs` içindeki
-   yerel reviewer fixture'ı `'Local reviewer fixture: PASS.'` döndürüyor; güncel
-   inceleme sözleşmesi bunu ayrıştıramıyor (`INVALID_REVIEWER_RESULT`), dolayısıyla
-   betik `awaiting_user_review` beklerken düşer. Doğrulandı — varsayım değil.
-   Düzeltmesi küçük: fixture'ın sözleşmeye uygun JSON döndürmesi yeterli. `npm test`
-   ve çalışma zamanı etkilenmez.
-5. **Tekrarlayan reviewer bulgularını mekanik kontrole çevirmek** — bu bir kural,
+4. **Tekrarlayan reviewer bulgularını mekanik kontrole çevirmek** — bu bir kural,
    açık iş değil. Sessiz `catch` için bir kez yapıldı ve reviewer'ı o konudan
    tamamen çıkardı; aynı bulgu ikinci kez görüldüğünde aynı yol izlenmelidir.
 
@@ -347,19 +345,48 @@ bugün iyileştirmiyor. Kayda geçiyorlar ki tekrar keşfedilmesinler.
   yalnız kimlik görünüyor. Kanıt metni ayrıca gösteriliyor, bilgi kaybı sınırlı.
 - **`server.mjs` sözleşme hatalarına 500 dönüyor.** "Bu proje X durumundayken devam
   ettirilemez" gibi durumlar 409/422 olmalı. Panel mesajı yine gösteriyor.
-- **HTTP katmanının test kapsamı yok.** 121 testin hiçbiri `server.mjs` üzerinden
+- **HTTP katmanının test kapsamı yok.** 142 testin hiçbiri `server.mjs` üzerinden
   geçmiyor; ayrıca modül import edilir edilmez `listen` çağırdığı için exported
   `createServer` test içinden güvenle kullanılamıyor.
 
+## Release hazırlığı
+
+Kabul edilmiş bir projede elle tetiklenen, tamamen deterministik bir ölçüm.
+Sözleşmesi `src/release-readiness.mjs`, raporu üretilen repository kökündeki
+`RELEASE_READINESS.json`, kopyası `projects.release_report` sütununda.
+
+**Neden proje durumu değil.** Yeni bir durum `IN_FLIGHT_PROJECT_STATUSES`,
+`RESUMABLE_PROJECT_STATUSES`, `markStaleRunsInterrupted` ve bütün resume
+yollarından geçirilmek zorunda kalırdı; ayrıca geçmişteki `accepted` projeleri
+geriye dönük olarak eksikmiş gibi gösterirdi. Kullanıcının istediğinde sorduğu bir
+soru için bu karmaşıklık gereksizdi. Değerlendirme projeyi `busyProjects` üzerinden
+kilitler (release derlemesi resume'un kullanacağı worktree'ye yazar) ama durumu
+değiştirmez.
+
+**Şiddet anlamı.** `blocker` = tek cümleyle savunulabilir, mekanik olarak
+doğrulanan ve artefaktı harici kullanıcı için kullanılamaz/yanlış kimlikli yapan
+olgu. `warning` = gerçek eksik, ama APK'yı bir test kullanıcısına vermeyi
+engellemez; durumu asla değiştirmez. `info` = yargısız kayıt.
+
+**İmza gerçeği.** Flutter şablonu release derlemesini debug anahtarıyla imzalar.
+Rapor bunu `signing.state: "debug_signing"` ve
+`store_distribution_verified: false` olarak bildirir. Studio anahtar üretmez,
+parola/keystore saklamaz, Play App Signing yapılandırmaz. `READY` yalnız
+**sideload ile harici teste verilebilir** demektir.
+
+**Gerçek toolchain kanıtı (9 Eylül 2026):** `Akış Cep` üzerinde gerçek
+`flutter build apk --release` koşuldu → `READY`, 98 saniye, 55.838.362 baytlık APK,
+sha256 `b382a7a10649ec3e5697a53b213a7597c051ce53bd088110e30dd9f8a1680010` (bağımsız
+olarak yeniden hesaplandı), 0 engel, 2 uyarı (`product_description`, `signing`).
+Üretilen repository build sonrası temiz kaldı. Rapor scratchpad'e yazıldı; projenin
+kaydı ve Git durumu bilerek değiştirilmedi.
+
 ## Planlanan yön (henüz uygulanmadı)
 
-Bir sonraki muhtemel yön döngünün sağ tarafına ilk adımdır: **doğrulanmış MVP →
-yayınlanabilir pazar deneyi.** Olası ilk artış release artefaktı/hazırlık işidir.
-
-Bunların **hiçbiri bugün mevcut değildir** ve mevcutmuş gibi belgelenmemelidir:
-release derlemesi, imzalama/keystore otomasyonu, mağaza yükleme, dağıtım
-otomasyonu, analitik, deney sözleşmeleri veya pazar hazırlık araçları. Hattın
-ürettiği tek artefakt `flutter build apk --debug` çıktısıdır.
+Sıradaki adım gerçek dağıtım tarafıdır. Bunların **hiçbiri bugün mevcut değildir**:
+imzalama/keystore otomasyonu, mağaza yükleme, store listing üretimi, dağıtım
+otomasyonu, analitik, crash reporting, faturalama, deney sözleşmeleri veya pazar
+deneyi panoları.
 
 ## Repository haritası
 
@@ -376,6 +403,7 @@ otomasyonu, analitik, deney sözleşmeleri veya pazar hazırlık araçları. Hat
 | `src/quality-report.mjs` | Kalite raporu ve inceleme sözleşmesi |
 | `src/source-diagnostics.mjs` | Üretilen Dart kaynağında sessiz hata yutma taraması |
 | `src/device-tester.mjs` | Cihaz kapısı, arıza sınıflandırması, imza |
+| `src/release-readiness.mjs` | Deterministik release hazırlık değerlendirmesi ve raporu |
 | `src/android-environment.mjs` | Emülatör başlatma, açılış bekleme, build-tools sağlığı |
 | `src/context-packager.mjs` | Rol bazlı context paketleri |
 | `src/mvp_studio/static/index.html` | Panel |

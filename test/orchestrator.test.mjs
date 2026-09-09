@@ -1026,3 +1026,138 @@ test('a reviewer that breaks the contract twice fails the project without loopin
   assert.match(finished.error, /JSON veya tek satırlık PASS\/FAIL/);
   database.close();
 });
+
+/** Minimal Android surface of a generated Flutter project, for release checks. */
+function materializeAndroidProject(workspace, { applicationId = 'com.aimvpstudio.odakmini' } = {}) {
+  const write = (relative, contents) => {
+    fs.mkdirSync(path.dirname(path.join(workspace, relative)), { recursive: true });
+    fs.writeFileSync(path.join(workspace, relative), contents, 'utf8');
+  };
+  write('pubspec.yaml', 'name: odakmini\ndescription: "Odak seansları."\nversion: 1.0.0+1\n');
+  write('android/app/build.gradle.kts', [
+    'android {',
+    '    defaultConfig {',
+    `        applicationId = "${applicationId}"`,
+    '    }',
+    '    buildTypes {',
+    '        release {',
+    '            signingConfig = signingConfigs.getByName("debug")',
+    '        }',
+    '    }',
+    '}',
+    '',
+  ].join('\n'));
+  write('android/app/src/main/AndroidManifest.xml', [
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
+    '    <application android:label="Odak Mini" android:icon="@mipmap/ic_launcher">',
+    '        <activity android:name=".MainActivity" android:exported="true"/>',
+    '    </application>',
+    '</manifest>',
+    '',
+  ].join('\n'));
+  write('android/app/src/main/res/mipmap-hdpi/ic_launcher.png', 'icon');
+}
+
+async function reviewedProject(orchestrator, database, name = 'Odak Mini') {
+  const spec = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'odak-mini', 'PROJECT_SPEC.md',
+  ), 'utf8');
+  const project = orchestrator.createProject(name, spec);
+  const reviewed = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+  assert.equal(reviewed.status, 'awaiting_user_review', reviewed.error);
+  return project;
+}
+
+const passingChecker = workspace => ({ checks: {
+  analyze: { status: 'PASS', exit_code: 0 }, test: { status: 'PASS', exit_code: 0 },
+  apk: { status: 'PASS', exit_code: 0, path: createFakeApk(workspace) },
+} });
+
+test('release readiness runs only after the product validation flow has been accepted', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-release-gate-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  const orchestrator = new Orchestrator({
+    database, runner: new FakeRunner(), projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1, flutterChecker: passingChecker,
+    releaseBuilder: () => { throw new Error('kabul edilmemiş projede derleme çalıştırıldı'); },
+  });
+  const project = await reviewedProject(orchestrator, database);
+
+  assert.throws(
+    () => orchestrator.evaluateReleaseReadiness(project.id),
+    /yalnız kabul edilmiş projelerde/,
+  );
+  assert.equal(orchestrator.isEvaluatingRelease(project.id), false);
+  database.close();
+});
+
+test('release readiness attaches a report without touching the project state', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-release-report-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  let builds = 0;
+  const orchestrator = new Orchestrator({
+    database, runner: new FakeRunner(), projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1, flutterChecker: passingChecker,
+    releaseBuilder: workspace => {
+      builds += 1;
+      const artifact = path.join(workspace, 'build/app/outputs/flutter-apk/app-release.apk');
+      fs.mkdirSync(path.dirname(artifact), { recursive: true });
+      fs.writeFileSync(artifact, 'release-bytes');
+      return { status: 0, stdout: 'built', stderr: '' };
+    },
+  });
+  const project = await reviewedProject(orchestrator, database);
+  assert.equal(orchestrator.acceptProject(project.id).status, 'accepted');
+  materializeAndroidProject(project.workspace_path);
+
+  const started = orchestrator.evaluateReleaseReadiness(project.id);
+  assert.equal(started.evaluating, true);
+  assert.equal(orchestrator.isEvaluatingRelease(project.id), true);
+  const report = await started.promise;
+
+  assert.equal(builds, 1);
+  assert.equal(report.status, 'READY', JSON.stringify(report.blockers));
+  assert.equal(orchestrator.isEvaluatingRelease(project.id), false);
+  const stored = database.getProject(project.id);
+  assert.equal(stored.status, 'accepted');
+  assert.equal(JSON.parse(stored.release_report).status, 'READY');
+  assert.equal(JSON.parse(stored.release_report).artifact.size_bytes, 'release-bytes'.length);
+  const reportPath = path.join(project.workspace_path, 'RELEASE_READINESS.json');
+  assert.ok(fs.existsSync(reportPath));
+  assert.equal(JSON.parse(fs.readFileSync(reportPath, 'utf8')).status, 'READY');
+  assert.equal(
+    spawnSync('git', ['status', '--porcelain', 'RELEASE_READINESS.json'],
+      { cwd: project.workspace_path, encoding: 'utf8' }).stdout.trim(), '',
+    'rapor commit edilmedi',
+  );
+  const events = database.listEvents(project.id).map(event => event.event_type);
+  assert.ok(events.includes('release_readiness.started'));
+  assert.ok(events.includes('release_readiness.completed'));
+  assert.ok(!events.includes('release_readiness.failed'));
+
+  const again = await orchestrator.evaluateReleaseReadiness(project.id).promise;
+  assert.equal(again.status, 'READY');
+  assert.equal(builds, 2);
+  database.close();
+});
+
+test('an accepted project without Android identity is blocked, not treated as shippable', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-release-blocked-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  let built = false;
+  const orchestrator = new Orchestrator({
+    database, runner: new FakeRunner(), projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1, flutterChecker: passingChecker,
+    releaseBuilder: () => { built = true; return { status: 0 }; },
+  });
+  const project = await reviewedProject(orchestrator, database);
+  orchestrator.acceptProject(project.id);
+  const report = await orchestrator.evaluateReleaseReadiness(project.id).promise;
+
+  assert.equal(report.status, 'BLOCKED');
+  assert.equal(built, false, 'engelli projede release derlemesi çalıştırıldı');
+  assert.equal(report.artifact, null);
+  assert.ok(report.blockers.some(item => item.id === 'application_id'));
+  assert.equal(database.getProject(project.id).status, 'accepted');
+  database.close();
+});

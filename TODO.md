@@ -2,8 +2,9 @@
 
 Son güncelleme: 9 Eylül 2026
 
-Son tam kontrol: `npm run check` başarılı, `npm test` **121/121 PASS** (arka arkaya
-on tam koşu, sıfır flake).
+Son tam kontrol: `npm run check` başarılı, `npm test` **142/142 PASS**.
+`npm run test:minimal-live` gerçek Codex ile uçtan uca geçiyor (tek canlı çağrı).
+Release hazırlığı gerçek Flutter toolchain'inde `Akış Cep` üzerinde `READY` üretti.
 
 Bu dosya **kalan işi** tutar. Kapanmış maddelerin gerekçeleri ve tasarım kararları
 [PROJECT_STATUS.md](PROJECT_STATUS.md) içindeki sözleşme ve "Bilinçli kararlar"
@@ -15,18 +16,7 @@ bölümlerine taşınmıştır; tam metinleri `git log` içindedir.
 `npm run check` ve `npm test` çalıştırılmalı, ardından `PROJECT_STATUS.md`
 güncellenmelidir.
 
-### 1. `npm run test:minimal-live` bozuk
-
-- [ ] `scripts/minimal-live-check.mjs` içindeki yerel reviewer fixture'ını güncel
-  inceleme sözleşmesine uygun JSON döndürecek şekilde düzelt.
-- [ ] Betiğin uçtan uca tamamlandığını gerçek Codex ile bir kez doğrula.
-
-**Bulgu (doğrulandı):** fixture `'Local reviewer fixture: PASS.'` döndürüyor.
-`parseReviewerResult` bunu ne JSON ne de tek satırlık PASS/FAIL olarak
-ayrıştırabiliyor, `INVALID_REVIEWER_RESULT` fırlatıyor; betik
-`awaiting_user_review` beklerken düşüyor. `npm test` ve çalışma zamanı etkilenmez.
-
-### 2. `Akış Cep` cihaz kapısını güncel semantikte yeniden koş
+### 1. `Akış Cep` cihaz kapısını güncel semantikte yeniden koş
 
 - [ ] Panelden "Cihaz testini yeniden dene" ile projeyi devam ettir.
 - [ ] Sonucun PASS olduğunu ve `housekeeping.avd_wipe` alanının `SKIPPED`
@@ -36,7 +26,7 @@ ayrıştırabiliyor, `INVALID_REVIEWER_RESULT` fırlatıyor; betik
 geçmişi bozmamak için **bilerek değiştirilmedi**. Güncel semantikte PASS üreteceği
 hem kayıtlı rapordan hem canlı `wipeAvdAfterTest` ölçümünden doğrulandı.
 
-### 3. Eski örnek projeleri güncel sözleşmelerle yeniden üret
+### 2. Eski örnek projeleri güncel sözleşmelerle yeniden üret
 
 - [ ] `Servis Cep` — kritik akış sözleşmesinden önce üretildi; `USER_FLOWS.json` ve
   `integration_test/` içermiyor, cihaz kapısı `isRepairableDeviceFailure` ile hemen
@@ -44,7 +34,7 @@ hem kayıtlı rapordan hem canlı `wipeAvdAfterTest` ölçümünden doğrulandı
 - [ ] `Stok Cep` — eski cihaz koşusunun başarısız kaydı; yeniden denemeden önce
   güncel ortam kapısı ve stabil Android build-tools ile değerlendirilmeli.
 
-### 4. Review Repair'i gerçek bir koşuda gör
+### 3. Review Repair'i gerçek bir koşuda gör
 
 - [ ] Reviewer'ı bloklayan bir koşuda onarım döngüsünün ve geçmiş bulgu
   aktarımının çalıştığını doğrula.
@@ -67,13 +57,19 @@ iyileştirmiyorlar. Ayrıntı ve gerekçeler
 
 ## Planlanan yön — henüz uygulanmadı
 
-Döngünün sağ tarafına ilk adım: **doğrulanmış MVP → yayınlanabilir pazar deneyi.**
-Olası ilk artış release artefaktı/hazırlık işidir; kapsamı henüz belirlenmedi.
+Yayınlanabilirlik artık ölçülüyor; **yayınlama hâlâ yapılmıyor.** Sıradaki adımlar,
+değer sırasıyla:
 
-Aşağıdakilerin **hiçbirinin kodu bu repository'de yoktur** ve varmış gibi
-belgelenmemelidir: release derlemesi, imzalama/keystore otomasyonu, mağaza
-yükleme, dağıtım otomasyonu, analitik, deney sözleşmeleri, pazar hazırlık
-araçları. Hattın ürettiği tek artefakt `flutter build apk --debug` çıktısıdır.
+1. **Üretim imzası.** `READY` bugün "sideload edilebilir" demek. Gerçek dağıtım için
+   kullanıcı tarafından sağlanan bir keystore ile imzalama ve imzanın doğrulanması
+   gerekir. Anahtar üretimi ve parola saklama bilinçli olarak Studio dışında kalmalı.
+2. **Dağıtım kanalı.** İmzalı APK'yı gerçek test kullanıcılarına ulaştıran en küçük
+   yol (internal testing veya doğrudan bağlantı).
+3. **Ölçüm sözleşmesi.** KILL/ITERATE/SCALE kararını besleyecek asgari sinyal.
+
+Aşağıdakilerin **hiçbirinin kodu bu repository'de yoktur**: imzalama/keystore
+otomasyonu, mağaza yükleme, store listing üretimi, dağıtım otomasyonu, analitik,
+crash reporting, faturalama, deney sözleşmeleri, pazar deneyi panoları.
 
 ## Kapanmış işler
 
@@ -110,3 +106,11 @@ Tam gerekçeler için `git log`; sözleşme hâline gelenler `PROJECT_STATUS.md`
 - Flutter kalite komutlarına güvenli timeout ve Windows process-tree sonlandırma.
 - `npm run check` kapsamının bütün `src/*.mjs` modüllerine genişletilmesi.
 - Cihaz ortamı depolama preflight'ı ve görünür kök neden mesajı.
+- `minimal-live-check` reviewer fixture'ının güncel inceleme sözleşmesine uydurulması.
+
+**Release hazırlığı (son artış)**
+
+- Deterministik release hazırlık değerlendirmesi (`src/release-readiness.mjs`).
+- Kimlik/sürüm/simge/geliştirme adresi/artefakt/SHA-256/imza kontrolleri.
+- `RELEASE_READINESS.json` raporu, proje kaydı ve panel gösterimi.
+- Kabul edilmiş projeye iliştirilen, durum değiştirmeyen yaşam döngüsü entegrasyonu.

@@ -127,6 +127,15 @@ export function createServer() {
         sendJson(response, 202, await orchestrator.submitFeedback(feedbackMatch[1], message));
         return;
       }
+      const releaseMatch = request.method === 'POST'
+        && url.pathname.match(/^\/api\/projects\/([a-f0-9]{12})\/release-readiness$/);
+      if (releaseMatch) {
+        // Returns immediately: a real release build takes minutes and the result
+        // lands on the project detail response when it is done.
+        const { id, evaluating } = orchestrator.evaluateReleaseReadiness(releaseMatch[1]);
+        sendJson(response, 202, { id, evaluating });
+        return;
+      }
       const artifactMatch = request.method === 'GET'
         && url.pathname.match(/^\/api\/projects\/([a-f0-9]{12})\/artifact$/);
       if (artifactMatch) {
@@ -165,6 +174,7 @@ export function createServer() {
         if (!project) sendJson(response, 404, { detail: 'Proje bulunamadı.' });
         else sendJson(response, 200, {
           ...project,
+          release_evaluating: orchestrator.isEvaluatingRelease(match[1]),
           agent_runs: database.listAgentRuns(match[1]),
           tasks: database.listTasks(match[1]),
           events: database.listEvents(match[1], { limit: 400 }),

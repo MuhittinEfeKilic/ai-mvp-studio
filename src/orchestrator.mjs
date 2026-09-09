@@ -17,6 +17,7 @@ import {
   renderQualityReportMarkdown, validateQualityReport,
 } from './quality-report.mjs';
 import { parseEmulatorList, probeBuildTools } from './android-environment.mjs';
+import { runReleaseReadiness, writeReleaseReadinessReport } from './release-readiness.mjs';
 import { runSourceDiagnostics } from './source-diagnostics.mjs';
 import { parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec } from './spec-validator.mjs';
 
@@ -274,7 +275,7 @@ export class Orchestrator {
   constructor({
     database, runner, projectsDir, maxConcurrentRuns = 2, flutterChecker = null,
     deviceTester = null, maxConcurrentAgents = 5, maxParallelBuilders = 4, tokenBudget = 0,
-    deviceMinFreeMb = 1536, flutterTimeoutMs = 600_000,
+    deviceMinFreeMb = 1536, flutterTimeoutMs = 600_000, releaseBuilder = null,
   }) {
     this.database = database;
     this.runner = runner;
@@ -289,6 +290,9 @@ export class Orchestrator {
     this.tokenBudget = tokenBudget;
     this.deviceMinFreeMb = deviceMinFreeMb;
     this.flutterTimeoutMs = flutterTimeoutMs;
+    // Test seam for the release build, mirroring flutterChecker/deviceTester.
+    this.releaseBuilder = releaseBuilder;
+    this.releaseEvaluations = new Set();
     // Budget is per uninterrupted run: resuming is the user deciding to spend more.
     this.budgetBaseline = new Map();
     // Project and builder parallelism multiply; this caps the real Codex process
@@ -418,6 +422,79 @@ export class Orchestrator {
       id: projectId, projectRoot: path.dirname(project.workspace_path), workspace: project.workspace_path,
     });
     return this.database.getTask(task.id);
+  }
+
+  /** True while a release readiness evaluation is running for this project. */
+  isEvaluatingRelease(projectId) {
+    return this.releaseEvaluations.has(projectId);
+  }
+
+  /**
+   * Answers "is this technically ready to hand to a real external user?" on an
+   * already accepted project. Deliberately NOT a pipeline state: it produces a
+   * report attached to the project instead. A new status would have to be
+   * threaded through the in-flight/resumable lists, `markStaleRunsInterrupted`
+   * and every resume path, and would retroactively make historical accepted
+   * projects look incomplete — for a report that answers a question the user
+   * asks on demand.
+   */
+  evaluateReleaseReadiness(id) {
+    const project = this.database.getProject(id);
+    if (!project) throw new Error('Proje bulunamadı.');
+    if (project.status !== 'accepted') {
+      throw new Error(
+        `Release hazırlık değerlendirmesi yalnız kabul edilmiş projelerde çalışır; bu proje ${project.status} durumunda.`,
+      );
+    }
+    if (this.isEvaluatingRelease(id)) throw new Error('Bu proje için değerlendirme zaten sürüyor.');
+    this.#assertNotBusy(id);
+    // Shares the busy guard with the pipeline: a release build writes into the
+    // same worktree a resume would use.
+    this.busyProjects.add(id);
+    this.releaseEvaluations.add(id);
+    this.database.addEvent(id, 'release_readiness.started', { workspace: project.workspace_path });
+    const evaluation = this.#runReleaseReadiness(project).finally(() => {
+      this.releaseEvaluations.delete(id);
+      this.busyProjects.delete(id);
+    });
+    // Surfaced through the project detail endpoint, not by blocking the request:
+    // a real release build takes minutes.
+    return { id, evaluating: true, promise: evaluation };
+  }
+
+  async #runReleaseReadiness(project) {
+    const workspace = project.workspace_path;
+    try {
+      const report = await runReleaseReadiness({
+        workspace,
+        specContent: project.prompt,
+        buildRelease: async () => {
+          if (this.releaseBuilder) return this.releaseBuilder(workspace);
+          const flutter = await resolveFlutter(workspace, this.flutterTimeoutMs);
+          if (!flutter) {
+            return { status: null, stdout: '', stderr: 'Flutter SDK bulunamadı. FLUTTER_BIN veya PATH ayarını kontrol edin.' };
+          }
+          return runFlutterAsync(flutter, ['build', 'apk', '--release'], workspace, this.flutterTimeoutMs);
+        },
+      });
+      writeReleaseReadinessReport(workspace, report);
+      // Targeted commit like the quality reports: a release build churns
+      // gitignored Gradle state, so an agent-style whole-tree check is wrong here.
+      git(workspace, ['add', 'RELEASE_READINESS.json']);
+      if (gitChanged(workspace)) {
+        git(workspace, ['commit', '-m', 'chore: record release readiness report']);
+      }
+      this.database.updateProject(project.id, { release_report: JSON.stringify(report) });
+      this.database.addEvent(project.id, 'release_readiness.completed', {
+        status: report.status,
+        blockers: report.blockers.length,
+        warnings: report.warnings.length,
+      });
+      return report;
+    } catch (error) {
+      this.database.addEvent(project.id, 'release_readiness.failed', { error: error.message });
+      return null;
+    }
   }
 
   acceptProject(id) {

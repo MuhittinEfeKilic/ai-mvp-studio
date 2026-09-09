@@ -8,6 +8,26 @@ import { config } from '../src/config.mjs';
 import { Database } from '../src/database.mjs';
 import { Orchestrator } from '../src/orchestrator.mjs';
 
+/**
+ * The reviewer verdict has to satisfy the same contract as a real review: JSON
+ * only, every acceptance criterion answered exactly once, and no blocking issue
+ * on a PASS. The criterion list is read from the contract file the orchestrator
+ * wrote, so the fixture cannot drift away from it the way the previous
+ * `'Local reviewer fixture: PASS.'` string did.
+ */
+function reviewerVerdict(workspace) {
+  const filePath = path.join(workspace, 'ACCEPTANCE_CRITERIA.json');
+  const criteria = fs.existsSync(filePath)
+    ? JSON.parse(fs.readFileSync(filePath, 'utf8')).criteria ?? [] : [];
+  return JSON.stringify({
+    status: 'PASS',
+    summary: 'Local reviewer fixture: checkpoint flow verified.',
+    criteria: criteria.map(item => ({ id: item.id, status: 'PASS', evidence: 'index.html' })),
+    issues: [],
+    notes: [],
+  });
+}
+
 class MinimalHybridRunner {
   constructor() {
     this.codex = new CodexRunner(config.codexCommand);
@@ -47,7 +67,9 @@ class MinimalHybridRunner {
       });
     }
     assert.ok(fs.existsSync(path.join(workspace, 'index.html')));
-    return 'Local reviewer fixture: PASS.';
+    return /Review the complete Flutter/.test(prompt)
+      ? reviewerVerdict(workspace)
+      : 'Local integration fixture completed.';
   }
 }
 
