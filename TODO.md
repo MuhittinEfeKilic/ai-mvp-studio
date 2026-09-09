@@ -1,14 +1,46 @@
 # AI MVP Studio — TODO
 
-Son güncelleme: 7 Eylül 2026
+Son güncelleme: 9 Eylül 2026
 
-Bu listedeki doğrulanmış açıklar kapatılmıştır. Son tam kontrol: `npm run check`
-başarılı, `npm test` **102/102 PASS**.
+Son tam kontrol: `npm run check` başarılı, `npm test` **102/102 PASS**. Aşağıdaki
+iki yeni açık gerçek `Akış Cep` cihaz onarımı koşusunda doğrulanmıştır.
 
 Bu liste, güncel mimari ve test incelemesinde doğrulanan işleri içerir. Maddeler
 öncelik sırasındadır. Bir madde tamamlandığında ilgili regresyon testi eklenmeli,
 `npm run check` ve `npm test` çalıştırılmalı, ardından `PROJECT_STATUS.md`
 güncellenmelidir.
+
+## P0 — Device repair sonrasında reviewer sonucunu zorunlu olarak yenile
+
+- [ ] Device repair kodu değiştirdiğinde bellekteki eski `reviewerMessage` değerini
+  de geçersiz kıl; yalnız task kaydını `pending` yapmakla yetinme.
+- [ ] Reviewer'ı final kalite ve cihaz PASS raporlarını içeren son commit üzerinde
+  yeniden çalıştır ve task'ı `completed` olmadan projeyi `awaiting_user_review`
+  durumuna geçirme.
+- [ ] Eşzamanlı ilk reviewer tamamlandıktan sonra device repair oluşan senaryoda
+  ikinci reviewer koşusunu ve tutarlı proje/task durumunu doğrulayan regresyon ekle.
+
+### Bulgu
+
+`Akış Cep` reviewer koşusu 8 Eylül 21:36'da tamamlandı; device repair ise 9 Eylül
+09:51'de repository kodunu değiştirdi. Buna rağmen eski reviewer mesajı final karar
+olarak kullanıldı. Proje `awaiting_user_review` iken reviewer task kaydı `pending`
+kaldı; yani final kod gerçekten yeniden incelenmedi.
+
+## P1 — Cihaz raporlarının Git sahipliğini ve checkpoint'ini düzelt
+
+- [ ] Her cihaz koşusunun `DEVICE_REPORT.json` çıktısını orchestrator-owned ayrı
+  bir commit/checkpoint olarak kaydet.
+- [ ] Repair ve bağımlılık kurulumundaki genel `git add -A` işlemlerinin önceki
+  cihaz raporunu yanlış commit'e sürüklemesini engelle.
+- [ ] PASS, FAIL ve WAITING cihaz sonuçlarından sonra generated repository'nin
+  beklenmeyen kirli dosya bırakmadığını regresyonla doğrula.
+
+### Bulgu
+
+Resume sırasında `chore: install planned dependencies` commit'leri yalnız
+`DEVICE_REPORT.json` değişikliğini taşıdı. Final 6/6 PASS raporu ise pipeline
+tamamlandığında çalışma ağacında kirli kaldı ve elle commit edilmek zorunda kaldı.
 
 ## P1 — İlk builder dalgasında gerçek paralelliği zorunlu kıl
 
