@@ -640,6 +640,7 @@
     const ACTIVITY_VALIDATION_EVENTS = new Set([
       'preflight.completed', 'device_test.completed', 'reviewer.contract_rejected',
       'release_readiness.started', 'release_readiness.completed', 'release_readiness.failed',
+      'application_completeness.completed', 'application_completeness.failed',
     ]);
     const ACTIVITY_SYSTEM_EVENTS = new Set([
       'scaffold.created', 'warm_build.completed', 'dependencies.installed', 'task_plan.rejected',
@@ -694,6 +695,8 @@
       }
       if (event.event_type === 'item.updated' && item.type === 'todo_list') return 'Görev listesi güncellendi';
       return ({
+        'application_completeness.completed':'Uygulama bütünlüğü ölçüldü',
+        'application_completeness.failed':'Uygulama bütünlüğü ölçülemedi',
         'context.packaged':'Bağlam paketi hazırlandı',
         'dependencies.installed':'Bağımlılıklar kuruldu',
         'device_test.completed':'Cihaz doğrulaması tamamlandı',
@@ -729,11 +732,13 @@
           .filter(check => check && check.status && check.status !== 'PASS')
           .map(check => check.details || check.status).filter(Boolean).join(' · ');
       }
-      if (event.event_type === 'release_readiness.completed') {
-        return `${num(payload.blockers || 0)} engel · ${num(payload.warnings || 0)} uyarı`;
+      if (event.event_type === 'release_readiness.completed'
+        || event.event_type === 'application_completeness.completed') {
+        return `${payload.status ? payload.status + ' · ' : ''}${num(payload.blockers || 0)} engel · ${num(payload.warnings || 0)} uyarı`;
       }
       if (event.event_type === 'reviewer.contract_rejected' || event.event_type === 'task_plan.rejected'
-        || event.event_type === 'release_readiness.failed') return payload.error || '';
+        || ['release_readiness.failed', 'application_completeness.failed']
+          .includes(event.event_type)) return payload.error || '';
       if (event.event_type === 'scaffold.created') return [payload.project_name, payload.org].filter(Boolean).join(' · ');
       if (event.event_type === 'turn.completed' && payload.usage) {
         return `${num(payload.usage.input_tokens || 0)} giriş · ${num(payload.usage.output_tokens || 0)} çıkış tokenı`;
@@ -822,7 +827,7 @@
       return JSON.stringify([
         project.id, project.status, project.error, project.final_message,
         project.quality_report, project.device_report, project.artifact_path,
-        project.release_report, project.release_evaluating,
+        project.release_report, project.release_evaluating, project.completeness_report,
         (project.tasks || []).map(task => [task.id, task.status, task.attempt_count, task.error]),
         (project.agent_runs || []).map(run => [run.id, run.status, run.output_tokens, run.context_chars]),
         (project.events || []).length,
@@ -939,9 +944,9 @@
     }
 
     function overviewTone(status) {
-      if (['PASS', 'READY', 'ACCEPTED', 'completed', 'accepted'].includes(status)) return 'ok';
+      if (['PASS', 'READY', 'COMPLETE', 'ACCEPTED', 'completed', 'accepted'].includes(status)) return 'ok';
       if (['WAITING', 'WARNING', 'WARN', 'pending', 'paused_context', 'paused_usage', 'awaiting_user_review'].includes(status)) return 'warn';
-      if (['FAIL', 'FAILED', 'BLOCKED', 'failed'].includes(status)) return 'bad';
+      if (['FAIL', 'FAILED', 'BLOCKED', 'INCOMPLETE', 'failed'].includes(status)) return 'bad';
       if (status === 'RUNNING') return 'run';
       return tone(status);
     }
@@ -1041,6 +1046,7 @@
       const quality = validationReport(project.quality_report);
       const device = validationReport(project.device_report);
       const release = validationReport(project.release_report);
+      const completeness = validationReport(project.completeness_report);
       const verdict = lastVerdict(runs);
       const criteria = Array.isArray(verdict?.criteria) ? verdict.criteria : [];
       const groups = deviceGroups(device);
@@ -1059,6 +1065,7 @@
             ${summary('Kalite', quality?.status || 'NOT RUN')}
             ${summary('Cihaz kapısı', device?.status || 'NOT RUN', groups.passed ? 'Ürün kontrolleri PASS' : '', deviceTone)}
             ${summary('Kabul kriterleri', verdict?.status || 'NOT RUN', acceptanceCount)}
+            ${summary('Uygulama bütünlüğü', completeness?.status || 'NOT RUN', completeness ? `${completeness.blockers?.length || 0} engel` : '')}
             ${summary('Release', releaseStatus)}
           </dl>
         </section>
@@ -1076,6 +1083,16 @@
           ${verdict?.notes?.length ? reportDetails('review-notes', 'İnceleme notları · engelleyici değil', verdict.notes) : ''}
           ${reportDetails('review-report', 'Tam inceleme kararı', verdict)}
           ${project.final_message ? reportDetails('final-message', 'Sonuç özeti', project.final_message) : ''}`)}
+        ${section('Uygulama bütünlüğü', completeness?.status || 'NOT RUN', `
+          <p class="muted">${completeness ? (completeness.status === 'COMPLETE' ? 'Üretim kaynağında tamamlanmamış uygulama izi bulunmadı. Ölçüm yalnız deterministik izleri kapsar; ürünün tamamlandığını kanıtlamaz.' : 'Tamamlanmamış uygulama izi bulundu. Bu ölçüm bir kapı değildir; proje durumunu ve diğer kapı sonuçlarını değiştirmez.') : 'Bu proje için bütünlük ölçümü kaydedilmemiş. Ölçüm koşu sonunda otomatik üretilir.'}</p>
+          ${completeness ? `<dl class="kv validation-release-meta">
+            <dt>Taranan kaynak</dt><dd>${esc(completeness.scope?.root || 'lib')}/ · ${num(completeness.scope?.files || 0)} dosya</dd>
+            <dt>Engel</dt><dd>${num(completeness.blockers?.length || 0)}</dd>
+            <dt>Uyarı</dt><dd>${num(completeness.warnings?.length || 0)}</dd>
+          </dl>
+          ${validationChecks((completeness.checks || []).map(check => [check.title || check.id, check]), 'completeness')}
+          ${(completeness.findings || []).length ? reportDetails('completeness-findings', `Bulgular ve kanıt (${completeness.findings.length}) · dosya, satır ve gerekçe`, completeness.findings) : ''}
+          ${reportDetails('completeness-report', 'Tam bütünlük raporu', completeness)}` : ''}`)}
         ${section('Release hazırlığı', releaseStatus, `
           <p class="muted">${project.release_evaluating ? 'Değerlendirme sürüyor. Aşağıdaki veriler varsa önceki rapora aittir.' : release?.status === 'READY' ? 'READY: sideload ile harici test için uygun. Mağaza dağıtımı doğrulanmadı.' : release?.status === 'BLOCKED' ? 'Release adayı engellendi. Bu sonuç projenin kabul durumunu değiştirmez.' : project.status === 'accepted' ? 'Henüz değerlendirilmedi. Başlıktaki eylemle release hazırlığını değerlendirebilirsiniz.' : 'Release değerlendirmesi proje kabul edildikten sonra kullanılabilir.'}</p>
           ${release ? `<dl class="kv validation-release-meta">

@@ -1,0 +1,14 @@
+[mcp_servers.serena]
+command = 'C:\Users\efeklc\AppData\Local\Microsoft\WinGet\Links\uvx.exe'
+args = [
+    "--from",
+    "git+https://github.com/oraios/serena",
+    "serena",
+    "start-mcp-server",
+    "--context",
+    "claude-code",
+    "--project",
+    'C:\Users\efeklc\Documents\GitHub\ai-mvp-studio',
+    "--open-web-dashboard",
+    "false",
+]

@@ -105,6 +105,7 @@ export class Database {
     this.#ensureColumn('projects', 'accepted_at', 'TEXT');
     this.#ensureColumn('projects', 'device_report', 'TEXT');
     this.#ensureColumn('projects', 'release_report', 'TEXT');
+    this.#ensureColumn('projects', 'completeness_report', 'TEXT');
     this.#ensureColumn('agent_runs', 'context_chars', 'INTEGER NOT NULL DEFAULT 0');
     this.#ensureColumn('agent_runs', 'context_manifest', 'TEXT');
   }
@@ -138,6 +139,7 @@ export class Database {
     const allowed = [
       'status', 'final_message', 'error', 'quality_report', 'artifact_path',
       'user_feedback', 'accepted_at', 'device_report', 'release_report',
+      'completeness_report',
     ];
     const entries = Object.entries(fields).filter(([key]) => allowed.includes(key));
     if (!entries.length) return;

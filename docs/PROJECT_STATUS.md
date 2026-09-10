@@ -1,6 +1,6 @@
 # AI MVP Studio — Güncel Durum ve Handoff
 
-Son güncelleme: 9 Eylül 2026
+Son güncelleme: 10 Eylül 2026
 
 ## Nerede duruyoruz
 
@@ -10,7 +10,8 @@ SCALE**. Amacı ve optimize ettiği şeyler [README](README.md) başında anlat�
 
 Bugün uygulanmış olan kısım **fikir → doğrulanmış MVP → ölçülmüş
 yayınlanabilirlik**tir. Hat, onaylanmış bir spec'ten kalite ve cihaz kapılarını
-geçmiş, incelenmiş bir uygulama üretir; kabul edilmiş bir projede release hazırlığı
+geçmiş, incelenmiş bir uygulama üretir; koşunun sonunda uygulamanın tamamlanmamışlık
+izleri deterministik olarak ölçülür; kabul edilmiş bir projede release hazırlığı
 deterministik olarak ölçülür ve gerçek bir release APK üretilir.
 
 **Yayınlama otomasyonu yoktur.** İmza anahtarı üretimi, mağaza yükleme, dağıtım,
@@ -60,10 +61,10 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **142/142 test**. Cihaz temizliği ayrımı, cihaz hedefi
+- Studio regresyonu: **155/155 test**. Cihaz temizliği ayrımı, cihaz hedefi
   sınıflandırması, AVD adı fallback'i, reviewer sözleşme düzeltmesi, Codex stdin
   arızası, bayat APK yedeği kurtarması, deterministik process timeout'u, event loop
-  canlılığı ve release hazırlık değerlendirmesi kapsanır.
+  canlılığı, release hazırlık değerlendirmesi ve uygulama bütünlüğü taraması kapsanır.
 - **Hiçbir toolchain komutu event loop'u bloke etmez.** Flutter, Gradle, adb ve
   aapt çağrılarının tamamı `async-process-runner` üzerinden çalışır; orchestrator
   içinde senkron kalan tek şey yerel Git plumbing'idir.
@@ -297,8 +298,8 @@ Sekmeli, proje odaklı: **Genel · Çalışma · Doğrulama · Etkinlik**.
 - **Çalışma** — mevcut agent görünümü, token/rol tabloları ve eski Pipeline
   görev ayrıntıları ile yeniden deneme eylemleri.
 - **Genel** — durum, önerilen eylem, pipeline özeti ve dört proje ölçümü.
-- **Doğrulama** — kalite, cihaz, kriterler, release ve ayrı ortam/temizlik
-  bölümleri; kanıtlar ve ham raporlar açılır ayrıntılarda.
+- **Doğrulama** — kalite, cihaz, kriterler, uygulama bütünlüğü, release ve ayrı
+  ortam/temizlik bölümleri; kanıtlar ve ham raporlar açılır ayrıntılarda.
 - **Etkinlik** — mevcut filtreli olay akışı.
 
 Yoklama, görünen veri değişmedikçe yeniden çizim yapmaz; açık panel, taslak metin ve
@@ -321,7 +322,10 @@ kaydırma konumu korunur. Olay uç noktası son 400 olayı döndürür.
    akış eklemek yerine güncel spec'le yeniden üretmek doğru yol. `Stok Cep` eski
    cihaz koşusunun başarısız kaydıdır; yeniden deneme öncesinde güncel ortam kapısı
    ve stabil Android build-tools ile değerlendirilmelidir.
-4. **Tekrarlayan reviewer bulgularını mekanik kontrole çevirmek** — bu bir kural,
+4. **Bütünlük bulguları henüz onarılmıyor.** Ölçüm kullanıcıya kanıtla gösterilir;
+   bulguyu düzeltmek bugün kullanıcının kararıdır. Onarım döngüsüne bağlamadan önce
+   gerçek koşularda kaç bulgu çıktığı ve kaçının haklı olduğu görülmelidir.
+5. **Tekrarlayan reviewer bulgularını mekanik kontrole çevirmek** — bu bir kural,
    açık iş değil. Sessiz `catch` için bir kez yapıldı ve reviewer'ı o konudan
    tamamen çıkardı; aynı bulgu ikinci kez görüldüğünde aynı yol izlenmelidir.
 
@@ -347,6 +351,70 @@ bugün iyileştirmiyor. Kayda geçiyorlar ki tekrar keşfedilmesinler.
 - **HTTP katmanının test kapsamı yok.** 142 testin hiçbiri `server.mjs` üzerinden
   geçmiyor; ayrıca modül import edilir edilmez `listen` çağırdığı için exported
   `createServer` test içinden güvenle kullanılamıyor.
+
+## Uygulama bütünlüğü
+
+Kapılar "çalışıyor mu" sorusunu yanıtlar; bu ölçüm **"bitmiş görünüyor mu"** sorusunun
+mekanik olarak savunulabilir kısmını yanıtlar. Sözleşmesi `src/app-completeness.mjs`,
+raporu üretilen repository kökündeki `APPLICATION_COMPLETENESS.json`, kopyası
+`projects.completeness_report` sütununda.
+
+**Neden kapı değil.** İlk dilim yalnız ölçer. Kapıya çevirmek tek bir yanlış pozitifin,
+kalite ve cihaz kapılarını geçmiş bir koşuyu öldürmesine izin verirdi; ayrıca kabul
+edilmiş geçmiş projeleri geriye dönük olarak eksik gösterirdi. Ölçüm proje durumunu,
+kapı sonuçlarını ve kabul akışını değiştirmez, otomatik onarım tetiklemez. Ölçümün
+kendisi başarısız olursa bu da ürün hakkında bir şey söylemez: olay olarak
+(`application_completeness.failed`) kaydedilir ve hat devam eder.
+
+**Nerede çalışır.** Ana hatta reviewer PASS verdikten sonra ve geri bildirim turunun
+sonunda, `awaiting_user_review` durumuna geçmeden hemen önce. Yalnız dosya okur;
+toolchain komutu, cihaz veya agent turu maliyeti yoktur. Rapor, release raporu gibi
+path'e sınırlı ayrı bir commit'e alınır ve üretilen repository'yi temiz bırakır.
+
+**Kapsam.** Yalnız `lib/` altındaki üretim kaynağı. `test/`, `integration_test/`,
+üretilmiş dosyalar ve toolchain dosyaları taranmaz; oralarda stub ve boş geri çağrı
+meşrudur.
+
+**Şiddet anlamı.** `blocker` = mekanik olarak savunulabilir tamamlanmamışlık olgusu
+(kod hâlâ şablon, kontrol hiçbir şey yapmıyor, yol `UnimplementedError` fırlatıyor,
+kullanıcı metni yer tutucu) → `INCOMPLETE`. `warning` = gerçek iz, ama bilinçli bir
+karar olabilir; durumu asla değiştirmez. `info` = yargısız kayıt.
+
+| Kontrol | Şiddet | Ne arar |
+| --- | --- | --- |
+| `scaffold_remnant` | blocker | `MyHomePage`, `_incrementCounter`, `Flutter Demo`, "You have pushed the button" |
+| `noop_interaction` | blocker | Boş fonksiyona bağlı eylem geri çağrısı |
+| `unimplemented_stub` | blocker | Üretim kodunda `UnimplementedError` |
+| `placeholder_copy` | blocker | `lorem ipsum`, `coming soon`, yalnız "Yakında" yazan etiket, `not implemented`, `placeholder`/`dummy`/`TBD` |
+| `unfinished_marker` | warning | `TODO` / `FIXME` / `HACK` |
+
+**Yanlış pozitif politikası.** Kaynak kod/yorum/dize parçalarına ayrıştırılır ve
+interpolasyon kod olarak okunur, bu yüzden yorumdaki kesme işareti veya URL'deki `//`
+taramayı bozmaz. `onPressed: null` bulgu değildir (devre dışı kontrol).
+`onChanged`/`onSaved` gibi değer geri çağrıları, sqflite yaşam döngüsü kancaları
+(`onCreate`, `onUpgrade`, `onOpen` …) ve `*Changed`/`*Update`/`*Invoked` ile biten
+adlar kapsam dışıdır. Gövdesi yalnız açıklama içeren boş geri çağrı uyarıdır.
+`debugPrint` **bilerek** kapsam dışıdır: kaynak teşhis sözleşmesi hatanın yüzeye
+çıkarılmasını istiyor, aynı satırı "debug artığı" saymak kendi sözleşmemizle çelişirdi.
+
+**Spec farkındalığı.** `PROJECT_SPEC.md` yer tutucu dizenin birebir kendisini
+içeriyorsa bulgu uyarıya düşer ve `spec_permitted` işaretlenir. Karşılaştırma dizenin
+tamamı üzerindedir; spec'in sözcüğü geçiyor olması gerçek bir "yakında" ekranını
+susturmaz.
+
+**Gerçek üretilmiş uygulama kanıtı (10 Eylül 2026):** değerlendirici `projects/`
+altındaki 10 repository'ye (186 üretim Dart dosyası) uygulandı. Sekizi `COMPLETE`;
+`1ddc9c6ed5ae` hâlâ iskelet sayaç uygulamasını taşıdığı için, `b9c53b9a14bf`
+(`Stok Cep`) hareket listesindeki `onTap: () {}` yüzünden `INCOMPLETE`. Yanlış pozitif
+yok. Kayıtlı projelerin durumu, kaydı ve Git geçmişi bu ölçüm için **değiştirilmedi**;
+ölçüm scratchpad'de çalıştırıldı.
+
+**Kapsam dışı bırakılanlar (bilinçli).** Ölü uçlu navigasyon, eksik yükleniyor/boş/hata
+durumları, doğrulanmayan formlar, kalıcılık eksikleri ve kısmen uygulanmış özellikler.
+Bunların bir kısmı kabul kriterleri, cihaz kapısı ve reviewer tarafından zaten
+kapsanıyor; kalanı deterministik olarak ölçülebilir hâle gelmeden eklenmeyecek.
+`pubspec.yaml` açıklamasının iskelet varsayılanı olması ve `com.example` kimliği
+release hazırlığında zaten kontrol edildiği için burada tekrarlanmaz.
 
 ## Release hazırlığı
 
@@ -403,6 +471,7 @@ deneyi panoları.
 | `src/source-diagnostics.mjs` | Üretilen Dart kaynağında sessiz hata yutma taraması |
 | `src/device-tester.mjs` | Cihaz kapısı, arıza sınıflandırması, imza |
 | `src/release-readiness.mjs` | Deterministik release hazırlık değerlendirmesi ve raporu |
+| `src/app-completeness.mjs` | Üretilen uygulamada tamamlanmamışlık izlerinin deterministik taraması |
 | `src/android-environment.mjs` | Emülatör başlatma, açılış bekleme, build-tools sağlığı |
 | `src/context-packager.mjs` | Rol bazlı context paketleri |
 | `src/mvp_studio/static/index.html` | Panel |
@@ -438,7 +507,7 @@ değiştikten sonra sunucuyu **yeniden başlatın**.
 proje ölçümünü özetler; kanıt bağlantısı Doğrulama sekmesine açılır. Çalışma,
 eski Agentlar içeriğini ve Pipeline görev ayrıntıları/yeniden deneme eylemlerini
 korur. Doğrulama sırası: özet, kalite, cihaz ürün kontrolleri, kabul kriterleri,
-release hazırlığı ve ortam/temizlik. Kanıtlar, komut çıktıları, senaryolar,
+uygulama bütünlüğü, release hazırlığı ve ortam/temizlik. Kanıtlar, komut çıktıları, senaryolar,
 SHA-256, imza ve manifest bilgileri açılır bölümlerde bulunur.
 
 Kayıtlı cihaz kapısı durumu değiştirilmez; ürün kontrolleri ile temizlik ayrı

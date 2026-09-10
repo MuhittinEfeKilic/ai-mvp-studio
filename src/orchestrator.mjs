@@ -17,6 +17,9 @@ import {
   renderQualityReportMarkdown, validateQualityReport,
 } from './quality-report.mjs';
 import { parseEmulatorList, probeBuildTools } from './android-environment.mjs';
+import {
+  APPLICATION_COMPLETENESS_PATH, runApplicationCompleteness, writeApplicationCompletenessReport,
+} from './app-completeness.mjs';
 import { runReleaseReadiness, writeReleaseReadinessReport } from './release-readiness.mjs';
 import { runSourceDiagnostics } from './source-diagnostics.mjs';
 import { parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec } from './spec-validator.mjs';
@@ -1083,6 +1086,47 @@ export class Orchestrator {
     return body;
   }
 
+  /**
+   * Deterministic completeness measurement, recorded once the delivered code is
+   * final. It reads the generated sources only, so it costs no toolchain
+   * command, no device and no agent turn.
+   *
+   * It is not a gate. This first slice measures obvious signs of an unfinished
+   * app — scaffold remnants, controls wired to nothing, placeholder copy — and
+   * hands them to the user with evidence. Blocking on it would let a single
+   * false positive kill a run that every real gate already passed, and would
+   * retroactively mark accepted projects as incomplete. Failing to measure says
+   * nothing about the product either, so the failure is recorded as an event and
+   * the pipeline continues.
+   */
+  #recordApplicationCompleteness(projectId, workspace) {
+    try {
+      const project = this.database.getProject(projectId);
+      const report = writeApplicationCompletenessReport(workspace, runApplicationCompleteness({
+        workspace, specContent: project?.prompt ?? '',
+      }));
+      // Path-scoped like the release report: the completeness run must not sweep
+      // unrelated working-tree state into a commit of its own.
+      if (git(workspace, ['status', '--porcelain', '--', APPLICATION_COMPLETENESS_PATH])) {
+        git(workspace, ['add', APPLICATION_COMPLETENESS_PATH]);
+        git(workspace, [
+          'commit', '-m', 'chore: record application completeness report',
+          '--', APPLICATION_COMPLETENESS_PATH,
+        ]);
+      }
+      this.database.updateProject(projectId, { completeness_report: JSON.stringify(report) });
+      this.database.addEvent(projectId, 'application_completeness.completed', {
+        status: report.status,
+        blockers: report.blockers.length,
+        warnings: report.warnings.length,
+      });
+      return report;
+    } catch (error) {
+      this.database.addEvent(projectId, 'application_completeness.failed', { error: error.message });
+      return null;
+    }
+  }
+
   async #runDeviceGate(projectId, workspace, verifiedReport) {
     const project = this.database.getProject(projectId);
     const flowsPath = path.join(workspace, 'USER_FLOWS.json');
@@ -1261,6 +1305,7 @@ export class Orchestrator {
         throw new Error(`Feedback sonrası reviewer kalite kapısını geçemedi:\n${reasons}`);
       }
       this.#completeTask(id, 'reviewer', workspace, reviewerMessage);
+      this.#recordApplicationCompleteness(id, workspace);
       this.database.updateProject(id, {
         status: 'awaiting_user_review', final_message: reviewerResult.summary,
         quality_report: JSON.stringify(verified), artifact_path: path.join(workspace, verified.checks.apk.path),
@@ -1648,6 +1693,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
       const reviewerResult = reviewerVerdict
         ?? (await this.#settleReviewVerdict(id, workspace, reviewerMessage)).verdict;
 
+      this.#recordApplicationCompleteness(id, workspace);
       this.database.updateProject(id, {
         status: 'awaiting_user_review', final_message: reviewerResult.summary || reviewerMessage,
         quality_report: JSON.stringify(verifiedReport),

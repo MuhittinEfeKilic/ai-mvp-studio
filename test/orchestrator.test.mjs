@@ -141,11 +141,18 @@ test('coordinated mobile flow creates a dynamic task graph and completes it', as
   assert.ok(completed.artifact_path);
   assert.equal(JSON.parse(completed.quality_report).status, 'PASS');
 
+  const completeness = JSON.parse(completed.completeness_report);
+  assert.equal(completeness.status, 'COMPLETE');
+  assert.ok(fs.existsSync(path.join(project.workspace_path, 'APPLICATION_COMPLETENESS.json')));
+
   assert.equal(orchestrator.acceptProject(project.id).status, 'accepted');
   orchestrator.submitFeedback(project.id, 'Başlıktaki metni gözden geçir.');
   const reviewedAgain = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
   assert.equal(reviewedAgain.status, 'awaiting_user_review', reviewedAgain.error);
   assert.equal(database.listAgentRuns(project.id).filter(run => run.agent_name === 'Feedback Repair Agent').length, 1);
+  // Both pipeline exits measure: the main run and the feedback round.
+  assert.equal(database.listEvents(project.id)
+    .filter(event => event.event_type === 'application_completeness.completed').length, 2);
   assert.equal(orchestrator.acceptProject(project.id).status, 'accepted');
   database.close();
 });
@@ -1159,5 +1166,59 @@ test('an accepted project without Android identity is blocked, not treated as sh
   assert.equal(report.artifact, null);
   assert.ok(report.blockers.some(item => item.id === 'application_id'));
   assert.equal(database.getProject(project.id).status, 'accepted');
+  database.close();
+});
+
+/**
+ * Produces an application that passes every gate and is still visibly
+ * unfinished: a button wired to an empty callback and a TODO in production
+ * source. The integration agent owns the merged workspace, so this is where a
+ * real run would leave that residue behind.
+ */
+class UnfinishedAppRunner extends FakeRunner {
+  async run(options) {
+    if (options.prompt.includes('Inspect the merged Flutter task branches')) {
+      fs.mkdirSync(path.join(options.workspace, 'lib'), { recursive: true });
+      fs.writeFileSync(path.join(options.workspace, 'lib', 'main.dart'), [
+        "import 'package:flutter/material.dart';",
+        '',
+        "// TODO: connect the export action",
+        "final export = TextButton(onPressed: () {}, child: const Text('Dışa aktar'));",
+        '',
+      ].join('\n'));
+    }
+    return super.run(options);
+  }
+}
+
+test('an app that passes every gate is still measured for obvious incompleteness', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-completeness-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  const orchestrator = new Orchestrator({
+    database, runner: new UnfinishedAppRunner(), projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1, flutterChecker: passingChecker,
+  });
+  const project = await reviewedProject(orchestrator, database, 'Eksik Uygulama');
+  const stored = database.getProject(project.id);
+
+  // The measurement is attached, not enforced: every gate keeps its verdict and
+  // the project still reaches the user for review.
+  assert.equal(stored.status, 'awaiting_user_review');
+  assert.equal(JSON.parse(stored.quality_report).status, 'PASS');
+  const report = JSON.parse(stored.completeness_report);
+  assert.equal(report.status, 'INCOMPLETE');
+  assert.deepEqual(report.blockers.map(item => item.id), ['noop_interaction']);
+  assert.deepEqual(report.warnings.map(item => item.id), ['unfinished_marker']);
+  assert.equal(report.findings[0].file, 'lib/main.dart');
+
+  // The artifact ships with the generated repository and leaves it clean.
+  const artifact = path.join(project.workspace_path, 'APPLICATION_COMPLETENESS.json');
+  assert.deepEqual(JSON.parse(fs.readFileSync(artifact, 'utf8')), report);
+  assert.equal(spawnSync('git', ['status', '--porcelain'], {
+    cwd: project.workspace_path, encoding: 'utf8',
+  }).stdout.trim(), '');
+  assert.ok(database.listEvents(project.id).some(event => (
+    event.event_type === 'application_completeness.completed' && event.payload.status === 'INCOMPLETE'
+  )));
   database.close();
 });

@@ -49,6 +49,7 @@ yayınlanabilir.
 - Bloklamayan Flutter/Android toolchain yürütmesi
 - Çalışma başına token bütçesi ve Git checkpoint tabanlı devam ettirme
 - Deterministik release hazırlık değerlendirmesi ve `RELEASE_READINESS.json` raporu
+- Deterministik uygulama bütünlüğü ölçümü ve `APPLICATION_COMPLETENESS.json` raporu
 
 **Henüz uygulanmadı** (bu repository'de kodu yok)
 
@@ -57,6 +58,9 @@ yayınlanabilir.
 - Dağıtım/deployment otomasyonu
 - Analitik, crash reporting, faturalama
 - Deney sözleşmeleri veya pazar deneyi panoları
+- Bütünlük bulgularının otomatik onarımı (bugün yalnız ölçülür ve raporlanır)
+- Bütünlüğün görsel/anlamsal tarafı: ölü uçlu navigasyon, eksik yükleniyor/boş/hata
+  durumları, kısmen uygulanmış özellikler
 - Claude entegrasyonu (bilinçli olarak kapsam dışı)
 
 ## Deterministik olan ve olmayan
@@ -74,6 +78,7 @@ doğrulanır ve bir agent'ın ikna kabiliyetine bağlı değildir.
 | Reviewer çıktısının şekli, kriter kimliklerinin sınırı, bloklama yetkisi | Reviewer'ın kriterler içindeki kanaati |
 | Onarım turu üst sınırları ve aynı-imza erken durması | — |
 | Release hazırlığı: kimlik, sürüm, artefakt varlığı/boyutu/SHA-256, imza durumu | — |
+| Uygulama bütünlüğü: iskelet artığı, boş eylem geri çağrısı, yer tutucu metin, `UnimplementedError`, TODO/FIXME | Ekranın gerçekten bitmiş görünüp görünmediğine dair yargı |
 | Timeout, süreç ağacı sonlandırma, token bütçesi, checkpoint/resume | — |
 
 Kapılar **yetkilidir**: reviewer `TEST_REPORT.json` ve `DEVICE_REPORT.json`
@@ -280,6 +285,61 @@ Reviewer bloklarsa en fazla iki hedefli Review Repair turu uygulanır; her turda
 kalite ve cihaz kapıları yeniden koşar. Bulgular değişmezse döngü durur ve gerekçeler
 proje hatasına yazılır.
 
+## Uygulama bütünlüğü
+
+Kapılar geçtiği hâlde uygulamanın **bitmemiş görünmesi** ayrı bir sorundur:
+`flutter analyze`, testler, APK ve cihaz akışları, ekranda hiçbir şey yapmayan bir
+düğme, yerinde kalmış `flutter create` iskeleti veya "Yakında" yazan bir ekran
+hakkında hiçbir şey söylemez. Bu ölçüm tam olarak bunu sorar: *bu uygulama, normal
+kalite ve cihaz kontrollerini geçmiş olmasına rağmen tamamlanmamış olduğuna dair
+belirgin izler taşıyor mu?*
+
+Ölçüm koşunun sonunda, kod kesinleştikten sonra otomatik çalışır (ana hat ve geri
+bildirim turu), sonucu üretilen repository'ye `APPLICATION_COMPLETENESS.json` olarak
+yazılır ve projeye iliştirilir. **Bir kapı değildir:** proje durumunu, kalite/cihaz/
+inceleme sonuçlarını ve mevcut kabul akışını değiştirmez, otomatik onarım tetiklemez.
+Yalnız üretilen kaynağı okur; toolchain komutu, cihaz veya agent turu maliyeti yoktur.
+Geçmiş projeler geriye dönük olarak eksik gösterilmez; ölçümü olmayan projede panel
+"ölçüm kaydedilmemiş" der.
+
+**Kapsam bilinçli olarak dardır:** yalnız `lib/` altındaki üretim kaynağı taranır.
+`test/`, `integration_test/`, üretilmiş dosyalar (`*.g.dart`, `*.freezed.dart` …) ve
+toolchain dosyaları taranmaz; oralarda stub, boş geri çağrı ve fixture meşrudur ve
+taramak raporun güvenilirliğini gürültüye çevirirdi.
+
+| Şiddet | Anlamı |
+| --- | --- |
+| **blocker** | Mekanik olarak savunulabilir bir olgu: kod hâlâ şablon, kontrol hiçbir şey yapmıyor, yol `UnimplementedError` fırlatıyor veya kullanıcının okuduğu metin yer tutucu. Durum `INCOMPLETE`. |
+| **warning** | Gerçek bir tamamlanmamışlık izi, ama bilinçli bir karar olabilir. Durumu **asla** değiştirmez. |
+| **info** | Kaydedilen olgu; yargı yok (taranan dosya sayısı). |
+
+Çalışan kontroller:
+
+| Kontrol | Şiddet | Ne arar |
+| --- | --- | --- |
+| `scaffold_remnant` | blocker | `MyHomePage`, `_incrementCounter`, `Flutter Demo`, "You have pushed the button" — `flutter create` iskeletinden kalan kod ve metin |
+| `noop_interaction` | blocker | Boş bir fonksiyona bağlı eylem geri çağrısı (`onPressed: () {}`, `onTap: () {}`, `() async {}`, `() => {}`) |
+| `unimplemented_stub` | blocker | Üretim kodunda `UnimplementedError` |
+| `placeholder_copy` | blocker | Kullanıcıya gösterilen yer tutucu metin: `lorem ipsum`, `coming soon`, yalnız "Yakında" yazan etiket, `not implemented`, `placeholder`/`dummy`/`TBD` |
+| `unfinished_marker` | warning | Üretim kaynağında `TODO` / `FIXME` / `HACK` |
+
+**Yanlış pozitife karşı kurallar.** Dart kaynağı kod, yorum ve dize parçalarına
+ayrıştırılır; string interpolasyonu kod olarak okunur, bu yüzden bir yorumdaki kesme
+işareti ya da bir URL'deki `//` taramayı bozmaz. `onPressed: null` bulgu değildir —
+Flutter'da devre dışı kontrol böyle yazılır. `onChanged`/`onSaved` gibi değer geri
+çağrıları, `onUpgrade`/`onCreate` gibi sqflite yaşam döngüsü kancaları ve
+`*Changed`/`*Update`/`*Invoked` ile biten her ad kapsam dışıdır; boş gövdeleri meşru
+bir karardır. Gövdesi yalnız açıklama içeren boş bir geri çağrı blocker değil
+uyarıdır: birisi neden boş olduğunu yazmıştır.
+
+**Spec farkındalığı.** `PROJECT_SPEC.md` yer tutucu metnin **birebir kendisini**
+içeriyorsa (ör. spec "Rapor ekranı \"Yakında\" gösterir" diyorsa) bulgu blocker değil
+uyarı olur ve raporda `spec_permitted` işaretlenir. Karşılaştırma dizenin tamamı
+üzerindedir; spec'in sözcüğü geçiyor olması gerçek bir "yakında" ekranını susturmaz.
+
+**Otomatik onarım yoktur.** Bu ilk dilim ölçer ve kanıtı gösterir; bulguları düzeltmek
+şimdilik kullanıcının kararıdır. Önce ölçüm, sonra otomasyon.
+
 ## Release hazırlığı
 
 Ürün doğrulaması bittikten **sonra** cevaplanan tek bir soru: *bu MVP gerçek bir
@@ -424,12 +484,12 @@ npm run check
 npm test
 ```
 
-`npm run check` 16 birinci taraf `src/*.mjs` modülünün sözdizimini denetler. `npm test`
-**142 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
+`npm run check` 17 birinci taraf `src/*.mjs` modülünün sözdizimini denetler. `npm test`
+**155 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
 worktree/path izolasyonu, checkpoint, kalite ve inceleme sözleşmeleri, kaynak teşhis
 taraması, cihaz kapısı, cihaz hedefi sınıflandırması, emülatör otomasyonu, süreç timeout
-semantiği, event loop canlılığı, release hazırlık değerlendirmesi ve orchestrator
-davranışlarını kapsar.
+semantiği, event loop canlılığı, release hazırlık değerlendirmesi, uygulama bütünlüğü
+taraması ve orchestrator davranışlarını kapsar.
 
 Tüm testler Codex'i taklit eder. Gerçek Codex'e dokunan tek ucuz kontrol ayrı tutulur:
 
@@ -443,9 +503,12 @@ bir Codex çağrısı yapar ve tek bir `index.html` üretir. Böylece checkpoint
 akışı, plan sözleşmesi, kalite kapısı ve inceleme sözleşmesi tek bir gerçek çağrı
 maliyetiyle uçtan uca doğrulanır. Bitince ölçülen token kullanımını yazar.
 
-**Son doğrulama kanıtı (9 Eylül 2026):** `npm run check` başarılı; tam paket **142/142
-PASS**. Timeout/stability testleri ayrıca
-30 kez koşuldu, sıfır flake. `npm run test:minimal-live` uçtan uca PASS: tek gerçek
+**Son doğrulama kanıtı (10 Eylül 2026):** `npm run check` başarılı (17 modül); tam paket
+**155/155 PASS**. Yeni olan 13 test uygulama bütünlüğü taramasını ve raporun hatta
+iliştirilmesini kapsar.
+
+**Önceki doğrulama kanıtı (9 Eylül 2026):** tam paket 142/142 PASS.
+Timeout/stability testleri 30 kez koşuldu, sıfır flake. `npm run test:minimal-live` uçtan uca PASS: tek gerçek
 Codex çağrısı, 33.592 giriş / 16.512 cache / 194 çıkış tokenı (**17.274
 faturalanabilir**), proje `accepted` durumuna ulaştı. Gerçek Windows toolchain'inde
 `flutter --version` asenkron yoldan 2465 ms sürdü ve bu süre boyunca event loop 235 kez
@@ -458,6 +521,13 @@ sha256 `b382a7a1…` (bağımsız olarak yeniden hesaplanıp doğrulandı), 0 en
 2 uyarı (`product_description` iskelet varsayılanı, `signing` debug anahtarı).
 Bu **gerçek toolchain kanıtıdır**; testlerdeki diğer release senaryoları enjekte
 edilmiş derlemelerle çalışan simülasyondur.
+
+**Gerçek üretilmiş uygulama kanıtı (10 Eylül 2026):** bütünlük değerlendiricisi `projects/`
+altındaki 10 üretilmiş repository'ye (186 üretim Dart dosyası) uygulandı. Sekizi
+`COMPLETE`; iki proje gerçek bir bulguyla `INCOMPLETE`: `1ddc9c6ed5ae` iskelet sayaç
+uygulamasını hâlâ `lib/main.dart` içinde taşıyor, `b9c53b9a14bf` (`Stok Cep`) hareket
+listesinde `onTap: () {}` ile hiçbir şey yapmayan bir satır içeriyor. Yanlış pozitif
+yok. Kayıtlı projelerin durumu ve Git geçmişi bu ölçüm için değiştirilmedi.
 
 Uçtan uca hat gerçek koşularda kanıtlanmıştır; ölçümler ve proje bazlı kanıtlar
 [PROJECT_STATUS.md](PROJECT_STATUS.md) dosyasındadır.
@@ -477,6 +547,9 @@ modüllerini kullanır. Runtime verileri `data/` ve `projects/` altında tutulur
   panelden yeniden tetiklenir.
 - **Review Repair ve önceki bulgu hafızası gerçek koşuda tetiklenmedi**; yalnız birim
   testleriyle korunuyor.
+- **Uygulama bütünlüğü yalnız mekanik izleri görür.** Ölü uçlu navigasyon, eksik
+  yükleniyor/boş/hata durumu, doğrulanmayan form veya yarım kalmış bir özellik bu
+  ölçümün kapsamında değildir; `COMPLETE` "ürün bitmiştir" demek değildir.
 - **Eski örnek projeler güncel sözleşmelerin gerisinde.** Ayrıntı ve proje bazlı durum
   için [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
@@ -496,6 +569,7 @@ modüllerini kullanır. Runtime verileri `data/` ve `projects/` altında tutulur
 | `src/source-diagnostics.mjs` | Üretilen Dart kaynağında sessiz hata yutma taraması |
 | `src/device-tester.mjs` | Cihaz kapısı, arıza sınıflandırması, hata imzası |
 | `src/release-readiness.mjs` | Deterministik release hazırlık değerlendirmesi ve rapor |
+| `src/app-completeness.mjs` | Üretilen uygulamada tamamlanmamışlık izlerinin deterministik taraması |
 | `src/android-environment.mjs` | Cihaz hedefi tespiti, emülatör başlatma, AVD temizliği, build-tools sağlığı |
 | `src/context-packager.mjs` | Rol bazlı context paketleri |
 | `src/config.mjs` | Ortam değişkenleri ve varsayılan ayarlar |

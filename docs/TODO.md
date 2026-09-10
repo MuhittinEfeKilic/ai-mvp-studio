@@ -1,10 +1,12 @@
 # AI MVP Studio — TODO
 
-Son güncelleme: 9 Eylül 2026
+Son güncelleme: 10 Eylül 2026
 
-Son tam kontrol: `npm run check` başarılı, `npm test` **142/142 PASS**.
+Son tam kontrol: `npm run check` başarılı, `npm test` **155/155 PASS**.
 `npm run test:minimal-live` gerçek Codex ile uçtan uca geçiyor (tek canlı çağrı).
 Release hazırlığı gerçek Flutter toolchain'inde `Akış Cep` üzerinde `READY` üretti.
+Uygulama bütünlüğü değerlendiricisi 10 üretilmiş repository üzerinde koşuldu:
+8 `COMPLETE`, 2 gerçek bulguyla `INCOMPLETE`, yanlış pozitif yok.
 
 Bu dosya **kalan işi** tutar. Kapanmış maddelerin gerekçeleri ve tasarım kararları
 [PROJECT_STATUS.md](PROJECT_STATUS.md) içindeki sözleşme ve "Bilinçli kararlar"
@@ -34,7 +36,21 @@ hem kayıtlı rapordan hem canlı `wipeAvdAfterTest` ölçümünden doğrulandı
 - [ ] `Stok Cep` — eski cihaz koşusunun başarısız kaydı; yeniden denemeden önce
   güncel ortam kapısı ve stabil Android build-tools ile değerlendirilmeli.
 
-### 3. Review Repair'i gerçek bir koşuda gör
+### 3. Bütünlük ölçümünü gerçek bir koşuda gör ve sonraki dilime karar ver
+
+- [ ] Yeni bir koşuda `APPLICATION_COMPLETENESS.json` üretildiğini ve panelin
+  Doğrulama sekmesinde göründüğünü doğrula.
+- [ ] Çıkan bulguların kaçının haklı olduğunu not et; onarım döngüsüne bağlamak
+  ancak bundan sonra tartışılmalı.
+
+Bugün ölçüm bir kapı değil: proje durumunu ve kapı sonuçlarını değiştirmiyor,
+otomatik onarım tetiklemiyor. Sıradaki aday dilim, ekran durumları
+(yükleniyor/boş/hata) ve ölü uçlu navigasyon gibi kategorilerin **deterministik**
+olarak ölçülebilen kısmı; bugünkü kapsam dışı listesi
+[PROJECT_STATUS.md → Uygulama bütünlüğü](PROJECT_STATUS.md#uygulama-bütünlüğü)
+içindedir.
+
+### 4. Review Repair'i gerçek bir koşuda gör
 
 - [ ] Reviewer'ı bloklayan bir koşuda onarım döngüsünün ve geçmiş bulgu
   aktarımının çalıştığını doğrula.
@@ -107,6 +123,19 @@ Tam gerekçeler için `git log`; sözleşme hâline gelenler `PROJECT_STATUS.md`
 - `npm run check` kapsamının bütün `src/*.mjs` modüllerine genişletilmesi.
 - Cihaz ortamı depolama preflight'ı ve görünür kök neden mesajı.
 - `minimal-live-check` reviewer fixture'ının güncel inceleme sözleşmesine uydurulması.
+
+**Uygulama bütünlüğü (son artış)**
+
+- Deterministik tamamlanmamışlık taraması (`src/app-completeness.mjs`): iskelet
+  artığı, boş eylem geri çağrısı, `UnimplementedError`, yer tutucu metin, TODO/FIXME.
+- `APPLICATION_COMPLETENESS.json` raporu, `projects.completeness_report` kaydı ve
+  panelin Doğrulama sekmesinde bölüm.
+- Kapı olmayan yaşam döngüsü entegrasyonu: ana hat ve geri bildirim turunun sonunda
+  çalışır, proje durumunu ve kapı sonuçlarını değiştirmez.
+- Yanlış pozitif politikası: yalnız `lib/`, kod/yorum/dize ayrıştırması,
+  `onPressed: null` ve değer/yaşam döngüsü geri çağrılarının kapsam dışı olması,
+  açıklamalı boş gövdenin uyarıya düşmesi, spec'in birebir istediği metnin uyarıya
+  düşmesi.
 
 **Release hazırlığı (son artış)**
 
