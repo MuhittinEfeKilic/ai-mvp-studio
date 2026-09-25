@@ -1,6 +1,6 @@
 # AI MVP Studio — Güncel Durum ve Handoff
 
-Son güncelleme: 10 Eylül 2026
+Son güncelleme: 23 Eylül 2026
 
 ## Nerede duruyoruz
 
@@ -29,6 +29,12 @@ bir emülatör türüne değil. Üç hedef kategorisi desteklenir:
 | Üçüncü taraf Android emülatörü | `third_party_emulator` | uygulanmaz |
 | Fiziksel Android cihaz | `physical_device` | uygulanmaz |
 
+- **Sıfırlama ölçüme bağlı ve iki kademeli.** Temizlikten sonra boş alan eşiğin
+  (`MVP_STUDIO_DEVICE_RECLAIM_BELOW_MB`, varsayılan 3072 MB) üstündeyse hiçbir şey
+  yapılmaz. Altındaysa kapı `studio_clean` anlık görüntüsünü **yerinde** yükler
+  (ölçülen 3–5 sn, emülatör düşmez). Tam wipe (ölçülen 48 sn) yalnız koşunun
+  sonunda ve bir kez çalışır; host `userdata-qemu.img.qcow2` dosyasını yalnız o
+  küçültebilir.
 - Hedef, cihaz edinildikten hemen sonra `detectDeviceTarget` ile sınıflandırılır ve
   `DEVICE_REPORT.json` içinde `target` alanında (tür, üretici, model, `ro.hardware`,
   Android sürümü) raporlanır; panelde cihaz kapısı kartının üstünde görünür.
@@ -36,16 +42,18 @@ bir emülatör türüne değil. Üç hedef kategorisi desteklenir:
   kimliği alır, AVD konsol komutlarına yanıt vermez ve gerçek cihaz profili taklit
   eder. Sınıflandırma `ro.hardware` (goldfish/ranchu) ve qemu boot özellikleriyle
   yapılır. Hiçbir hedef olmadığı şeymiş gibi etiketlenmez.
-- **AVD'ye özgü işlemler yalnız AVD hedefinde çalışır.** Bugün bu yalnız wipe'tır;
-  diğer hedeflerde `SKIPPED`, gerekçesiyle birlikte. Yapılacak bir şey olmaması
-  arıza değildir.
+- **AVD'ye özgü işlemler yalnız AVD hedefinde çalışır.** Bunlar snapshot
+  sıfırlaması ve tam wipe'tır; diğer hedeflerde `SKIPPED`, gerekçesiyle birlikte.
+  Yapılacak bir şey olmaması arıza değildir.
 - Cihaz kapısı integration testten önce hedef paketi kaldırır ve `/data` boş
   alanını kontrol eder. Varsayılan eşik 1536 MB'dir.
 - Yetersiz alan ürün hatası değildir; gerçek boş/gerekli alanla birlikte
   `awaiting_device_test` durumuna geçer. Başka uygulama verileri otomatik silinmez.
-- **Test sonrası temizlik kapı değildir.** Hedef paket kaldırma ve AVD wipe,
-  ürün kararı verildikten sonra çalışır; sonuçları `housekeeping` altında ve
-  `notes` uyarısı olarak raporlanır, fakat geçmiş bir koşuyu WAITING'e düşüremez.
+- **Test sonrası temizlik kapı değildir.** Hedef paket kaldırma, cihaz
+  artefaktlarının silinmesi ve gerekiyorsa sıfırlama, ürün kararı verildikten
+  sonra çalışır; sonuçları `housekeeping` altında (`app_cleanup`,
+  `device_artifacts`, `avd_reset`) ve başarısızsa `notes` uyarısı olarak
+  raporlanır, fakat geçmiş bir koşuyu WAITING'e düşüremez.
 
 Bu dosya sistemin **bugünkü hâlini** anlatır: hangi sözleşmeler bağlayıcıdır, hangi
 kararlar bilinçli olarak verilmiştir, hangi ölçümler gerçek koşulardan gelir ve
@@ -61,10 +69,23 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **155/155 test**. Cihaz temizliği ayrımı, cihaz hedefi
+- Studio regresyonu: **170/170 test**. Cihaz temizliği ayrımı, cihaz hedefi
   sınıflandırması, AVD adı fallback'i, reviewer sözleşme düzeltmesi, Codex stdin
   arızası, bayat APK yedeği kurtarması, deterministik process timeout'u, event loop
-  canlılığı, release hazırlık değerlendirmesi ve uygulama bütünlüğü taraması kapsanır.
+  canlılığı, path-scoped commit davranışı, analiz şiddet politikası,
+  spec/toolchain Android API uyumu, release hazırlık değerlendirmesi ve uygulama
+  bütünlüğü taraması kapsanır.
+- **Orchestrator commit'leri path-scoped'tur.** `commitPaths` hem "değişen var mı"
+  sorusunu hem commit'i aynı yollarla sınırlar. Bunun öncesinde dar bir `git add`,
+  bütün çalışma ağacına bakan `gitChanged()` ile korunuyordu; hattın sahibi olmadığı
+  kirli bir dosya ikisini çelişkiye düşürüp git'i 1 koduyla düşürüyordu.
+- **Analiz şiddet politikası:** `flutter analyze --no-fatal-infos`. Hata ve uyarı
+  bloklar, `info` seviyesindeki stil önerisi bloklamaz ama raporda görünür.
+- **Preflight spec/toolchain uyumunu sorar.** Spec'in istediği minimum Android
+  API, kurulu Flutter'ın tabanının altındaysa koşu ilk agent başlamadan durur.
+  Taban SDK kaynağından okunur; okunamazsa kontrol `SKIPPED`'tır.
+- **`DEVICE_REPORT.json` artık agent artefaktı gibi commit edilmiyor.** Ana
+  workspace'te toolchain'in yazdığı dosya, agent sınır ihlali sayılamaz.
 - **Hiçbir toolchain komutu event loop'u bloke etmez.** Flutter, Gradle, adb ve
   aapt çağrılarının tamamı `async-process-runner` üzerinden çalışır; orchestrator
   içinde senkron kalan tek şey yerel Git plumbing'idir.
@@ -73,6 +94,7 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 
 | Kimlik | Ad | Durum | Ne kanıtlıyor |
 | --- | --- | --- | --- |
+| `1c30b97a4b89` | AboneCep | `failed` | İki Studio kusurunun birlikte yakalandığı vaka: kalite kapısı tek bir `info` lint'inde düştü ve üç onarım turunu harcadı, ardından her devam denemesi `pubspec` commit'inde git'in 1 koduyla öldü. İkisi de düzeltildi; **kayıt bilerek değiştirilmedi**, temiz bir koşu sonraki doğrulamadır |
 | `1d95246c0382` | Akış Cep | `awaiting_device_test` | Final kodda 47/47 kalite testi, 6/6 emülatör akışı ve yenilenmiş reviewer PASS. Kayıt, temizliğin kapı olduğu dönemde oluştu; **veritabanı durumu bilerek değiştirilmedi**. Aynı koşu güncel semantikte PASS üretir (aşağıya bakın) |
 | `7b6df59adcb9` | Ders Notu (2. koşu) | `awaiting_user_review` | Yeni sözleşmelerin ilk gerçek doğrulaması; tek incelemede temiz geçti |
 | `c67140223074` | Ders Notu (1. koşu) | `awaiting_user_review` | İlk tam uçtan uca başarı; cihaz kapısı PASS; feedback turu gerçek kusuru düzeltti |
@@ -169,9 +191,16 @@ Aynı host bugün ölçüldüğünde `emulator-5554`'ün Android Studio AVD'si o
 görüldü (`ro.hardware=qcom`, konsol portu reddediyor, qemu özellikleri boş), bu
 yüzden temizlik artık `SKIPPED` ve aynı koşu **PASS** üretir.
 
+Kalite kapısı analizi `--no-fatal-infos` ile koşar. `flutter analyze` her bulguda —
+`info` dahil — 1 ile çıkar; bayrak olmadan tek bir stil önerisi `analyze`'ı FAIL
+yapıyor, döngü ilk hatada kırıldığı için `test` ve `apk` hiç çalışmıyor ve üç
+onarım turu da buna harcanıyordu. Info bulguları raporda ve
+`QUALITY_LOGS/analyze.log` içinde durmaya devam eder; yalnız kapı kararını
+değiştirmezler. Hata ve uyarı bloklamaya devam eder.
+
 | Kapı | Sahibi olduğu şey | Onarım turu | Erken durma |
 | --- | --- | --- | --- |
-| Kalite (`TEST_REPORT.json`) | `analyze`, `test`, `apk`, `diagnostics` | 3 | Aynı hata imzası iki turda tekrarlarsa → `ROOT_CAUSE_REPORT.md` |
+| Kalite (`TEST_REPORT.json`) | `analyze` (`--no-fatal-infos`), `test`, `apk`, `diagnostics` | 3 | Aynı hata imzası iki turda tekrarlarsa → `ROOT_CAUSE_REPORT.md` |
 | Cihaz (`DEVICE_REPORT.json`) | `flow_coverage`, `integration_test`, `apk_install`, `launch` | 2 | Aynı imza tekrarı veya düzeltilemez bulgu → `DEVICE_ROOT_CAUSE_REPORT.md` |
 | İnceleme | Kabul kriterleri, akış bütünlüğü, kapsam | 2 | Bulgular değişmezse durur; gerekçe hataya yazılır |
 
@@ -277,6 +306,46 @@ Bu oturumda gerçekten zaman kaybettiren şeyler:
    dokunan betikler satır sonundan bağımsız eşleşmelidir.
 5. **`markStaleRunsInterrupted` kapsamı** `IN_FLIGHT_PROJECT_STATUSES` listesidir.
    Yeni bir ara durum eklerken bu listeye de ekleyin, yoksa proje kurtarılamaz.
+6. **Dar `git add` ile `gitChanged()` aynı soruyu sormaz.** `gitChanged()` çalışma
+   ağacının kirli olup olmadığını, pathspec'siz `git commit` ise index'i sorar.
+   Kimsenin staging'e almadığı bir dosya ikisini çelişkiye düşürür ve git
+   "no changes added to commit" ile 1 kodunda çıkarak **koşuyu düşürür**. Gerçek
+   vaka: Flutter tool'u ısınma derlemesi sırasında `android/app/build.gradle.kts`
+   dosyasını yeniden yazıyor, devam eden koşuda zaten kurulu paketler `pubspec`'te
+   değişiklik bırakmıyor, index boş kalıyor. Orchestrator'ın rapor commit'leri
+   artık `commitPaths` üzerinden path-scoped'tur. `git add` eşleşmeyen bir
+   pathspec'te de sert hata verir; yardımcı bu yüzden yalnız diskte var olan veya
+   hâlâ tracked olan (silinme kaydı) yolları geçirir.
+7. **`flutter analyze` `info` bulgusunda da 1 ile çıkar.** Çıkış kodunu tek
+   başına PASS/FAIL'e çevirmek, tek bir stil önerisinin bütün kalite kapısını
+   düşürmesi demekti. Şiddet politikası artık komutun kendisinde:
+   `--no-fatal-infos`. Toolchain'in çıkış kodunu ürün kararına çevirirken hangi
+   şiddetin bloklaması gerektiğini her zaman açıkça seçin.
+8. **Toolchain ana workspace'i de değiştirir; agent sanmayın.** `#commitArtifact`
+   "artefakt dışında kirli dosya varsa agent sınırı aşmıştır" der. Bu bir agent
+   worktree'sinde doğrudur, ana workspace'te değildir: orada `flutter create`,
+   `pub get`, `pub add`, ısınma derlemesi ve cihaz kapısı komutlarını
+   orchestrator'ın kendisi çalıştırır. Gerçek koşuda bu, Flutter'ın gradle
+   migration'ını `Agent izin verilmeyen dosyaları değiştirdi` diye raporlayıp
+   bütün kapıları geçmiş bir koşuyu düşürdü ve cihaz sonucu kaydedilmeden kayboldu.
+   `DEVICE_REPORT.json` artık `commitPaths` ile yazılıyor. **Kalan risk:**
+   `TASK_PLAN.json` hâlâ ana workspace'te `#commitArtifact` ile commit ediliyor
+   (`orchestrator.mjs:748`); Coordinator'dan önce toolchain bir dosya yazarsa aynı
+   yanlış suçlama oradan gelir. Bugün tetiklenmedi, çünkü iskeletin `minSdk`
+   değeri zaten migration'ın hedefi değil.
+9. **Spec toolchain'in yasakladığını isteyebilir.** Flutter yalnız uyarmaz:
+   `MinSdkVersionMigration` 16–23 arası her `minSdk` değerini Gradle'a dokunan her
+   komutta geri yazar. Böyle bir gereksinim hiçbir onarım turuyla karşılanamaz;
+   reviewer bloklar, repair düzeltir, kapı geri alır, turlar biter. Preflight artık
+   bunu ilk agent'tan önce engelliyor. Yeni bir platform gereksinimi eklerken
+   "toolchain bunu geri yazar mı" sorusunu sorun.
+10. **Hata imzası filtresi analiz bulgularını görmüyordu.** `qualityFailureSignature`
+   yalnız `error|failed|exception|…` kelimelerini taşıyan satırları alıyordu;
+   `  info - … - rule_name` satırında bunların hiçbiri yok, bu yüzden bütün
+   lint-only arızalar aynı boş imzaya hash'leniyordu — iki farklı lint "aynı hata"
+   sayılıp onarım döngüsünü erken durdurabilirdi. Filtre artık analiz şiddet
+   satırlarını da alıyor. `ROOT_CAUSE_REPORT.md` de iki farklı çıkışı ayırıyor:
+   imza tekrarı ile tur üst sınırına ulaşma aynı cümleyle anlatılmıyor.
 
 ## Maliyet koruması
 

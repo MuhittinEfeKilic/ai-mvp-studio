@@ -4,8 +4,38 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  parseAcceptanceCriteria, parseCriticalUserFlows, validateSpec,
+  evaluateMinSdkCompatibility, parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec,
+  validateSpec,
 } from '../src/spec-validator.mjs';
+
+test('a spec below the toolchain Android floor is rejected, not left to the agents', () => {
+  // Measured case: the spec asked for API 23 while Flutter 3.44 builds from 24.
+  // Flutter's MinSdkVersionMigration rewrites any minSdk of 16-23 back to
+  // `flutter.minSdkVersion` on every Gradle command, so the reviewer blocked, the
+  // repair agent fixed the file, the next gate reverted it and the rounds ran out.
+  const blocked = evaluateMinSdkCompatibility({ min_android_sdk: '23' }, 24);
+  assert.equal(blocked.status, 'FAIL');
+  assert.equal(blocked.spec_min_sdk, 23);
+  assert.equal(blocked.toolchain_min_sdk, 24);
+  assert.match(blocked.details, /API 24/);
+
+  assert.equal(evaluateMinSdkCompatibility({ min_android_sdk: '24' }, 24).status, 'PASS');
+  assert.equal(evaluateMinSdkCompatibility({ min_android_sdk: '26' }, 24).status, 'PASS');
+
+  // Neither side may be invented: an unmeasured floor is not a passed check.
+  assert.equal(evaluateMinSdkCompatibility({ min_android_sdk: '23' }, null).status, 'SKIPPED');
+  assert.equal(evaluateMinSdkCompatibility({}, 24).status, 'SKIPPED');
+  assert.equal(evaluateMinSdkCompatibility({ min_android_sdk: 'lollipop' }, 24).status, 'SKIPPED');
+});
+
+test('the mobile template does not ship an Android minimum the toolchain refuses', () => {
+  const mobile = fs.readFileSync(path.resolve('templates/PROJECT_SPEC.mobile.template.md'), 'utf8');
+  const requested = Number(parseSpec(mobile).metadata.min_android_sdk);
+  // Every spec starts as a copy of this file, so a default below the floor would
+  // plant the same unsatisfiable requirement in every future project.
+  assert.ok(Number.isInteger(requested), 'template `min_android_sdk` okunamıyor');
+  assert.ok(requested >= 24, `template minimum Android API ${requested}, Flutter tabanının altında`);
+});
 
 const template = fs.readFileSync(path.resolve('templates/PROJECT_SPEC.template.md'), 'utf8');
 const mobileTemplate = fs.readFileSync(path.resolve('templates/PROJECT_SPEC.mobile.template.md'), 'utf8');

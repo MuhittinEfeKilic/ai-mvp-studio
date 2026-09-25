@@ -22,6 +22,9 @@ export const config = Object.freeze({
   // Billable tokens one uninterrupted run may spend; 0 disables the guard.
   projectTokenBudget: Number(process.env.MVP_STUDIO_PROJECT_TOKEN_BUDGET ?? 1_500_000),
   deviceMinFreeMb: Number(process.env.MVP_STUDIO_DEVICE_MIN_FREE_MB ?? 1536),
+  // Reclaim the device below this, instead of after every gate. A measured run
+  // never fell under 3947 MB, so the unconditional reset reclaimed nothing.
+  deviceReclaimBelowMb: Number(process.env.MVP_STUDIO_DEVICE_RECLAIM_BELOW_MB ?? 3072),
   codexCommand: process.env.MVP_STUDIO_CODEX_COMMAND ?? defaultCodexCommand(),
   root,
   dataDir: path.join(root, 'data'),

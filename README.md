@@ -115,7 +115,7 @@ Eski v1 spec'ler geriye uyumlu çalışır.
 ```text
 PROJECT_SPEC.md ─→ USER_FLOWS.json + ACCEPTANCE_CRITERIA.json
         ↓
-Preflight (Flutter + Android SDK + build-tools sağlığı)
+Preflight (Flutter + Android SDK + build-tools sağlığı + spec/toolchain uyumu)
         ↓
 flutter create iskeleti (orchestrator) ──→ Gradle ısınması (arka planda, paralel)
         ↓
@@ -139,7 +139,8 @@ Cihaz kapısı: hedef sınıflandırma · akış kapsamı · depolama
         │            ├─ ürün hatası   ──→ Device Repair × 2 ──→ kapılar yeniden koşar
         │            └─ ortam arızası ──→ awaiting_device_test (bekler, düşmez)
         ↓
-        └─ test sonrası temizlik (paket kaldırma, AVD ise wipe) → karara karışmaz
+        └─ test sonrası temizlik (paket kaldırma, cihaz artefaktları,
+           gerekiyorsa snapshot ile sıfırlama) → karara karışmaz
         ↓
 Mobile Reviewer (cihaz kapısıyla eşzamanlı başlar) ──FAIL──→ Review Repair × 2
         ↓
@@ -191,12 +192,49 @@ sütununa bakın.
 
 `flutter analyze`, `flutter test` ve `flutter build apk --debug` sonuçlarının üçü de
 `TEST_REPORT.json` içinde PASS olmalı ve APK dosyası workspace içinde gerçekten
-bulunmalıdır. Dördüncü çek kaynak teşhis taramasıdır: üretilen Dart kodundaki boş veya
+bulunmalıdır. Analiz `--no-fatal-infos` ile koşar: **hata ve uyarı bloklar, `info`
+seviyesindeki stil önerisi bloklamaz.** `flutter analyze` her bulguda — info dahil —
+1 ile çıkar; bayrak olmadan tek bir stil önerisi kapıyı düşürüyor, `test` ile `apk`
+çeklerini hiç çalıştırmıyor ve üç onarım turunu da harcıyordu. Info bulguları rapor
+ve `QUALITY_LOGS/analyze.log` içinde görünmeye devam eder; yalnız kapı kararını
+değiştirmezler. Dördüncü çek kaynak teşhis taramasıdır: üretilen Dart kodundaki boş veya
 hatayı yutan `catch` blokları bloklayıcı sayılır — hata ya incelenmeli ya yeniden
 fırlatılmalıdır. Dize interpolasyonu kod sayılır (`log('kayıt: $error')` kabul edilir).
 
 Builder, Integration ve Repair agent'ları Flutter/Gradle komutu çalıştırmaz; bunları
 yalnız orchestrator çalıştırır ve tam çıktıları `QUALITY_LOGS/` altında saklar.
+
+### Spec / toolchain uyumu
+
+Preflight, **ilk agent başlamadan önce**, spec'in istediği minimum Android API'yi
+kurulu Flutter'ın tabanıyla karşılaştırır. Taban SDK'nın kendisinden okunur
+(`gradle_utils.dart` → `minSdkVersionInt`, yedeği `FlutterExtension.kt`); okunamazsa
+kontrol `SKIPPED`'tır — ölçülmemiş bir gereksinim geçmiş sayılmaz.
+
+Spec tabanın altını isterse koşu burada, sıfır token harcanmadan durur. Bunun
+nedeni Flutter'ın yalnız uyarmaması: `MinSdkVersionMigration`, 16–23 arası her
+`minSdk` değerini Gradle'a dokunan her komutta `flutter.minSdkVersion`'a geri
+yazar. Yani düşük bir değer hiçbir onarım turuyla kalıcı olamaz — reviewer bloklar,
+repair düzeltir, sonraki kapı geri alır, turlar biter. Ölçülen gerçek maliyet: üç
+kalite onarımı, iki inceleme turu ve **568.000 faturalanabilir token**, hiçbir
+agent'ın karşılayamayacağı bir istek için.
+
+Orchestrator'ın kendi rapor commit'leri (`pubspec`, `TEST_REPORT`, `TASK_PLAN`,
+`DEVICE_REPORT`, tooling manifestleri, release ve bütünlük raporları)
+**path-scoped**'tur: hem
+"değişen var mı" sorusu hem de commit aynı yollarla sınırlıdır. Çalışma ağacının
+tamamına bakıp dar bir commit denemek, hattın sahibi olmadığı kirli bir dosya
+yüzünden — örneğin Flutter tool'unun ısınma derlemesi sırasında yeniden yazdığı
+`android/app/build.gradle.kts` — git'i "no changes added to commit" ile 1 kodunda
+düşürüyor ve aslında sorunsuz bir koşuyu öldürüyordu.
+
+`DEVICE_REPORT.json` de bu yüzden agent artefaktı gibi commit edilmez. Agent
+artefaktı commit'i, **başka herhangi bir dosya kirliyse** bunu sınır ihlali sayar;
+bu bir agent worktree'sinde doğrudur, ama cihaz raporunun yazıldığı ana workspace'te
+Flutter, Gradle ve adb'yi orchestrator'ın kendisi çalıştırmıştır ve onların dosya
+yazması meşrudur. Gerçek koşuda bu, Flutter'ın gradle migration'ını
+`Agent izin verilmeyen dosyaları değiştirdi` diye raporlayıp bütün kapıları geçmiş
+bir koşuyu düşürdü — üstelik cihaz sonucu veritabanına yazılmadan önce.
 
 Çevrimdışı bir ürünün `android/app/src/main/AndroidManifest.xml` dosyası ağ izni
 taşımaz. Flutter test sürücüsünün VM Service'e bağlanabilmesi için debug/profile
@@ -240,12 +278,41 @@ sonra geri yüklenip tek ek kurulumla normal açılışı doğrulanır. Studio b
 arasında yeniden başlatılırsa yedek diskte kalır; sonraki koşu onu geri yükleyip siler,
 çünkü yedek tanımı gereği bozulmamış teslim APK'sıdır.
 
-**Test sonrası temizlik kapı değildir.** Hedef paketin kaldırılması ve — hedef gerçekten
-bir AVD ise — `-wipe-data` ile temiz yeniden başlatma, ürün kararı verildikten *sonra*
-çalışır. Sonuçları `DEVICE_REPORT.json` içinde `housekeeping` altında ve başarısızsa
-`notes` uyarısı olarak raporlanır, fakat **geçmiş bir ürün doğrulamasını geçersiz
-kılamaz.** AVD olmayan hedeflerde wipe `SKIPPED`'tır; yapacak bir şey olmaması arıza
-değildir. Fiziksel cihazlar hiçbir zaman otomatik sıfırlanmaz.
+**Test sonrası temizlik kapı değildir.** Hedef paketin kaldırılması, cihaz üstündeki
+ekran görüntüsü/UI dökümünün silinmesi ve — gerekiyorsa — cihazın sıfırlanması, ürün
+kararı verildikten *sonra* çalışır. Sonuçları `DEVICE_REPORT.json` içinde
+`housekeeping` altında ve başarısızsa `notes` uyarısı olarak raporlanır, fakat
+**geçmiş bir ürün doğrulamasını geçersiz kılamaz.** AVD olmayan hedeflerde sıfırlama
+`SKIPPED`'tır; yapacak bir şey olmaması arıza değildir. Fiziksel cihazlar hiçbir zaman
+otomatik sıfırlanmaz.
+
+### Cihaz sıfırlama politikası
+
+Sıfırlama **ölçüme bağlıdır ve iki kademelidir.** Temizlikten sonra `/data` boş alanı
+yeniden okunur; `MVP_STUDIO_DEVICE_RECLAIM_BELOW_MB` eşiğinin (varsayılan 3072 MB)
+üstündeyse hiçbir şey yapılmaz ve rapor ölçülen değerle `SKIPPED` der.
+
+| Kademe | Ne yapar | Ölçülen süre | Ne zaman |
+| --- | --- | --- | --- |
+| Snapshot sıfırlama | `studio_clean` anlık görüntüsünü **yerinde** yükler; emülatör hiç düşmez | **3–5 sn** | Kapı sonunda, boş alan eşiğin altındaysa |
+| Tam wipe | `-wipe-data` ile soğuk yeniden başlatma | **48 sn** | Koşu bittikten sonra, bir kez |
+
+Anlık görüntü, kapının kendi doğruladığı durumdan kaydedilir (hedef paket yok, boş alan
+minimumun üstünde) ve yalnız bir kez, 31 saniyede alınır. Bu bir "fabrika imajı" değil,
+**kaydedilmiş bir sıfırlama noktasıdır**; silinirse sonraki tam wipe yenisini kaydeder.
+
+Tam wipe neden hâlâ gerekli: guest'te dosya silmek host'taki
+`userdata-qemu.img.qcow2` dosyasını küçültmez — imaj yazılan blok sayısıyla tek yönlü
+büyür. Snapshot bunu geri alamaz, wipe alır. Bu yüzden pahalı olan işlem koşunun
+sonuna taşındı: eskiden her kapıdan sonra çalışıyor ve **bir sonraki kapıya 48 saniyelik
+bir açılış beklemesi** yazıyordu.
+
+Ölçülen gerçek: bir koşuda cihaz kapısı dört kez işledi ve boş alan hiçbir zaman
+3947 MB'nin altına inmedi — yani o dört sıfırlamanın hiçbiri gerekli değildi.
+
+`DEVICE_REPORT.json` artık faz sürelerini de tutar (`durations_ms`): cihaz edinme,
+depolama hazırlığı, snapshot kaydı, integration test, APK kurulumu, açılış ve temizlik.
+Bir koşunun dakikalarının nereye gittiği artık olay zaman damgalarından çıkarılmıyor.
 
 Kapı arızayı sınıflandırır. Emülatör kopması, toolchain çöküşü veya yetersiz depolama
 gibi ortam arızaları `failure_kind: "environment"` ile işaretlenir ve projeyi başarısız
@@ -485,11 +552,13 @@ npm test
 ```
 
 `npm run check` 17 birinci taraf `src/*.mjs` modülünün sözdizimini denetler. `npm test`
-**155 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
+**170 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
 worktree/path izolasyonu, checkpoint, kalite ve inceleme sözleşmeleri, kaynak teşhis
 taraması, cihaz kapısı, cihaz hedefi sınıflandırması, emülatör otomasyonu, süreç timeout
-semantiği, event loop canlılığı, release hazırlık değerlendirmesi, uygulama bütünlüğü
-taraması ve orchestrator davranışlarını kapsar.
+semantiği, event loop canlılığı, path-scoped commit davranışı, analiz şiddet
+politikası, spec/toolchain Android API uyumu, cihaz sıfırlama politikası,
+release hazırlık değerlendirmesi, uygulama bütünlüğü taraması ve orchestrator
+davranışlarını kapsar.
 
 Tüm testler Codex'i taklit eder. Gerçek Codex'e dokunan tek ucuz kontrol ayrı tutulur:
 
@@ -503,9 +572,26 @@ bir Codex çağrısı yapar ve tek bir `index.html` üretir. Böylece checkpoint
 akışı, plan sözleşmesi, kalite kapısı ve inceleme sözleşmesi tek bir gerçek çağrı
 maliyetiyle uçtan uca doğrulanır. Bitince ölçülen token kullanımını yazar.
 
-**Son doğrulama kanıtı (10 Eylül 2026):** `npm run check` başarılı (17 modül); tam paket
-**155/155 PASS**. Yeni olan 13 test uygulama bütünlüğü taramasını ve raporun hatta
-iliştirilmesini kapsar.
+**Son doğrulama kanıtı (23 Eylül 2026):** `npm run check` başarılı (17 modül); tam paket
+**163/163 PASS**. Yeni olan 8 test, gerçek bir koşuyu düşüren dört kusuru kapatır:
+path-scoped commit (ilgisiz kirli dosyayla, yeni dosyayla ve silme ile) ve analiz
+şiddet politikası. `flutter analyze` şiddet davranışı gerçek toolchain'de ölçüldü
+(Flutter 3.44.6): tek bir `use_null_aware_elements` info bulgusu bayraksız **1**,
+`--no-fatal-infos` ile **0** kodunda çıkar ve info her iki durumda da raporlanır.
+Düzeltme, koşuyu gerçekten düşüren depo durumuna karşı da doğrulandı: `AboneCep`
+(`1c30b97a4b89`) çalışma ağacında kirli `android/app/build.gradle.kts` dururken
+`pubspec` commit'i artık fırlatmıyor, `false` dönüyor ve depoyu değiştirmiyor.
+
+Aynı koşu iki kusur daha ortaya çıkardı ve ikisi de kapatıldı. Cihaz raporu
+commit'i, kapıların tamamı PASS olduğu hâlde Flutter'ın gradle migration'ını agent
+ihlali sanıp koşuyu düşürüyordu; artık path-scoped ve orchestrator testi bunu
+toolchain'in gate ortasında dosya yeniden yazdığı senaryoyla doğruluyor. Spec ise
+Flutter'ın desteklemediği bir Android API'si isteyebiliyordu; preflight bunu artık
+ilk agent'tan önce engel olarak raporluyor. Flutter 3.44.6'nın tabanı SDK
+kaynağından okundu: `minSdkVersionInt = 24`.
+
+**Önceki doğrulama kanıtı (10 Eylül 2026):** tam paket **155/155 PASS**. Yeni olan
+13 test uygulama bütünlüğü taramasını ve raporun hatta iliştirilmesini kapsar.
 
 **Önceki doğrulama kanıtı (9 Eylül 2026):** tam paket 142/142 PASS.
 Timeout/stability testleri 30 kez koşuldu, sıfır flake. `npm run test:minimal-live` uçtan uca PASS: tek gerçek

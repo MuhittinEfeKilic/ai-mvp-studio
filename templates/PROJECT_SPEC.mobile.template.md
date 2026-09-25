@@ -7,7 +7,7 @@ application_type: "mobile"
 framework: "flutter"
 target_platform: "android"
 package_name: "com.example.app"
-min_android_sdk: "23"
+min_android_sdk: "24"
 orientation: "portrait"
 device_test: "required"
 complexity_tier: "advanced"
@@ -143,7 +143,9 @@ ve bütün durumları yazın.
 - Form faktörü: Telefon; tablet bu MVP'de yok.
 - Ekran yönü: `orientation` ile aynı.
 - Veri yaklaşımı: Local-first; internet gereksinimini açıkça belirtin.
-- Android sürümü: `min_android_sdk` gerekçesi.
+- Android sürümü: `min_android_sdk` gerekçesi. Kurulu Flutter'ın desteklediği
+  tabanın altına inmeyin; preflight bunu engel olarak raporlar ve koşuyu hiçbir
+  agent harcamadan durdurur. Flutter 3.44 için taban API 24'tür.
 - Arka plan, deep link ve bildirim kapsamı.
 
 # Navigasyon ve Ekran Davranışları

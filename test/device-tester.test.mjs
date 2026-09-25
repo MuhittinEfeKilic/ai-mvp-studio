@@ -10,9 +10,23 @@ import {
   parseDeviceSuite, renderDeviceSuite,
   runAndroidDeviceGate,
   validateFlowCoverage,
+  isPackageAbsent, reclaimDeviceStorage, shouldReclaimStorage,
 } from '../src/device-tester.mjs';
+import { resetAvdToSnapshot } from '../src/android-environment.mjs';
 
-const successfulWipe = async () => ({ status: 'PASS', avd_name: 'Test_AVD', details: 'temizlendi' });
+// The gate no longer wipes: it restores a recorded snapshot, and only when the
+// measured free space says the device needs reclaiming at all.
+const snapshotStubs = {
+  knownSnapshot: async () => ({ ok: true, present: true, output: 'studio_clean' }),
+  saveSnapshot: async () => ({ ok: true, output: 'OK' }),
+  resetSnapshot: async () => ({
+    status: 'PASS', mode: 'snapshot', snapshot: 'studio_clean',
+    details: 'Cihaz studio_clean anlık görüntüsünden yerinde sıfırlandı.', log: '',
+  }),
+};
+// 2048 MB: above the gate's 1536 MB minimum, below the 3072 MB reclaim
+// threshold, so the post-test reset actually runs.
+const LOW_SPACE_DF = 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 6291456 2097152 75% /data\n';
 const events = (file, id = 1, result = 'success') => [
   JSON.stringify({ type: 'testStart', test: { id, name: `${file} scenario` } }),
   JSON.stringify({ type: 'testDone', testID: id, result, skipped: false }),
@@ -75,7 +89,7 @@ test('device gate runs integration, installs APK, launches app and rejects fatal
   };
   const report = await runAndroidDeviceGate({
     workspace, apkPath: apk, packageName: 'com.example.app', flows: [{}],
-    flutterExecutable: 'flutter', adbExecutable: 'adb', run, wipeDevice: successfulWipe,
+    flutterExecutable: 'flutter', adbExecutable: 'adb', run, ...snapshotStubs,
   });
   assert.equal(report.status, 'PASS');
   assert.equal(report.checks.integration_test.status, 'PASS');
@@ -84,7 +98,15 @@ test('device gate runs integration, installs APK, launches app and rejects fatal
   assert.ok(adbOptions.every(options => options.timeout === ADB_COMMAND_TIMEOUT_MS));
   assert.ok(adbOptions.every(options => options.timeoutLabel === 'ADB_TIMEOUT'));
   assert.equal(calls.filter(call => call.command === 'flutter').length, 1);
-  assert.equal(calls.at(-1).args[2], 'uninstall');
+  const adbArgs = calls.filter(call => call.command === 'adb').map(call => call.args.join(' '));
+  assert.ok(adbArgs.some(args => args.includes('uninstall com.example.app')), 'hedef paket kaldırılmadı');
+  // Pulled to the host and then removed from the device instead of piling up.
+  assert.ok(adbArgs.some(args => args.includes('rm -f /sdcard/ai_mvp_device_smoke.png')), 'cihaz artefaktları silinmedi');
+  // 7168 MB free against a 3072 MB threshold: nothing to reclaim, so no reset.
+  assert.equal(report.housekeeping.avd_reset.status, 'SKIPPED');
+  assert.equal(report.housekeeping.avd_reset.free_mb, 7168);
+  assert.ok(report.durations_ms.integration_test >= 0);
+  assert.ok(report.durations_ms.housekeeping >= 0);
   assert.equal(fs.readFileSync(apk, 'utf8'), 'delivery');
   assert.equal(fs.existsSync(`${apk}.studio-backup`), false);
 });
@@ -96,7 +118,7 @@ test('a hung adb install becomes an environment wait at the ADB timeout', async 
   const installCalls = [];
   const report = await runAndroidDeviceGate({
     workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}],
-    flutterExecutable: 'flutter', adbExecutable: 'adb', wipeDevice: successfulWipe,
+    flutterExecutable: 'flutter', adbExecutable: 'adb', ...snapshotStubs,
     run: (command, args, options = {}) => {
       if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
       if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
@@ -125,7 +147,7 @@ test('device gate uses one suite and reports partial progress on timeout', async
   const flutterCalls = [];
   const report = await runAndroidDeviceGate({
     workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}, {}],
-    flutterExecutable: 'flutter', adbExecutable: 'adb', wipeDevice: successfulWipe,
+    flutterExecutable: 'flutter', adbExecutable: 'adb', ...snapshotStubs,
     run: (command, args, options = {}) => {
       if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
       if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
@@ -224,7 +246,7 @@ test('device gate waits instead of failing when the emulator breaks mid-run', as
   fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
   const gate = integrationOutput => runAndroidDeviceGate({
     workspace, apkPath: 'app.apk', packageName: 'com.example.app', flows: [{}],
-    flutterExecutable: 'flutter', adbExecutable: 'adb', wipeDevice: successfulWipe,
+    flutterExecutable: 'flutter', adbExecutable: 'adb', ...snapshotStubs,
     run: (command, args) => {
       if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
       if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
@@ -265,7 +287,7 @@ test('a missing critical-flow contract is not worth a repair round', () => {
   }), true);
 });
 
-test('a cleanup failure never downgrades an otherwise passing device verdict', async () => {
+test('a reset that cannot run never downgrades an otherwise passing device verdict', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'device-cleanup-'));
   fs.mkdirSync(path.join(workspace, 'integration_test'));
   fs.writeFileSync(path.join(workspace, 'integration_test', 'main_test.dart'), 'void main() {}');
@@ -274,16 +296,18 @@ test('a cleanup failure never downgrades an otherwise passing device verdict', a
   const report = await runAndroidDeviceGate({
     workspace, apkPath: apk, packageName: 'com.example.app', flows: [{}],
     flutterExecutable: 'flutter', adbExecutable: 'adb',
+    ...snapshotStubs,
     // The measured failure: the emulator console refuses the connection after
     // every critical flow has already passed.
-    wipeDevice: async () => ({
-      status: 'FAIL', details: 'Test AVD adı okunamadı; otomatik wipe yapılamadı.',
+    resetSnapshot: async () => ({
+      status: 'UNAVAILABLE', mode: 'none', snapshot: 'studio_clean',
+      details: 'studio_clean anlık görüntüsü yüklenemedi; tam wipe gerekiyor.',
       log: 'could not connect to TCP port 5554',
     }),
     run: (command, args) => {
       if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
       if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
-      if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
+      if (args.includes('df')) return { status: 0, stdout: LOW_SPACE_DF };
       if (args.includes('pidof')) return { status: 0, stdout: '1234\n' };
       if (args.includes('logcat') && args.includes('-d')) return { status: 0, stdout: 'Application started' };
       return { status: 0, stdout: command === 'flutter' ? events('integration_test/main_test.dart') : 'Success' };
@@ -294,10 +318,12 @@ test('a cleanup failure never downgrades an otherwise passing device verdict', a
   assert.equal(report.reason, undefined);
   // Housekeeping stays fully visible: a host that can no longer reset its AVD
   // is a real problem, just not a defect of the generated application.
-  assert.equal(report.housekeeping.avd_wipe.status, 'FAIL');
+  assert.equal(report.housekeeping.avd_reset.status, 'UNAVAILABLE');
   assert.equal(report.housekeeping.app_cleanup.status, 'PASS');
-  assert.match(report.notes.join('\n'), /AVD temizliği/);
-  assert.equal('avd_wipe' in report.checks, false);
+  assert.match(report.notes.join('\n'), /cihaz sıfırlaması/i);
+  assert.equal('avd_reset' in report.checks, false);
+  // The run is told to reclaim the device once, at the end, instead of here.
+  assert.equal(report.needs_full_wipe, true);
 });
 
 test('a stale delivery APK backup from an interrupted run is reclaimed', async () => {
@@ -311,7 +337,7 @@ test('a stale delivery APK backup from an interrupted run is reclaimed', async (
   fs.writeFileSync(`${apk}.studio-backup`, 'delivery');
   const report = await runAndroidDeviceGate({
     workspace, apkPath: apk, packageName: 'com.example.app', flows: [{}],
-    flutterExecutable: 'flutter', adbExecutable: 'adb', wipeDevice: successfulWipe,
+    flutterExecutable: 'flutter', adbExecutable: 'adb', ...snapshotStubs,
     run: (command, args) => {
       if (command === 'flutter') fs.writeFileSync(apk, 'test-apk');
       if (args.includes('install')) assert.equal(fs.readFileSync(apk, 'utf8'), 'delivery');
@@ -346,14 +372,15 @@ test('the device report names the Android runtime the product was validated on',
       device: 'emulator-5554', hardware: 'qcom', model: 'V2266A', manufacturer: 'vivo',
       android_release: '9', supports_avd_wipe: false,
     }),
-    wipeDevice: async options => {
+    ...snapshotStubs,
+    resetSnapshot: async options => {
       wipeTarget = options.target;
-      return { status: 'SKIPPED', target_type: options.target.type, details: 'AVD wipe uygulanmaz.', log: '' };
+      return { status: 'SKIPPED', mode: 'none', target_type: options.target.type, details: 'AVD sıfırlaması uygulanmaz.', log: '' };
     },
     run: (command, args) => {
       if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
       if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
-      if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
+      if (args.includes('df')) return { status: 0, stdout: LOW_SPACE_DF };
       if (args.includes('pidof')) return { status: 0, stdout: '1234\n' };
       if (args.includes('logcat') && args.includes('-d')) return { status: 0, stdout: 'Application started' };
       return { status: 0, stdout: command === 'flutter' ? events('integration_test/main_test.dart') : 'Success' };
@@ -366,8 +393,149 @@ test('the device report names the Android runtime the product was validated on',
   assert.match(report.logs.device_target, /Üçüncü taraf Android emülatörü/);
   // The classification is made once and handed to the target-specific operation.
   assert.equal(wipeTarget.type, 'third_party_emulator');
-  assert.equal(report.housekeeping.avd_wipe.status, 'SKIPPED');
-  assert.equal(report.housekeeping.avd_wipe.target_type, 'third_party_emulator');
+  assert.equal(report.housekeeping.avd_reset.status, 'SKIPPED');
+  assert.equal(report.housekeeping.avd_reset.target_type, 'third_party_emulator');
   // A skipped target-specific step is not a warning.
   assert.equal(report.notes, undefined);
+});
+
+test('reclaim runs on a measurement, not on every gate', () => {
+  // Across a real run the device reported 3966, 3947 and 5045 MB free against a
+  // 1536 MB gate minimum, so the old unconditional reset reclaimed nothing three
+  // times and charged a 48 second emulator boot to the gate that came next.
+  assert.equal(shouldReclaimStorage(3966), false);
+  assert.equal(shouldReclaimStorage(5045), false);
+  assert.equal(shouldReclaimStorage(3071), true);
+  assert.equal(shouldReclaimStorage(2048, 1800), false);
+  // Not measurable is not the same as "there is room".
+  assert.equal(shouldReclaimStorage(null), true);
+  assert.equal(shouldReclaimStorage(undefined), true);
+});
+
+test('an uninstall of a package that was never there is not a cleanup failure', () => {
+  // Measured: two of three gates in one run reported a housekeeping failure for
+  // removing an app the failing integration test had never installed.
+  assert.equal(isPackageAbsent('Failure [DELETE_FAILED_INTERNAL_ERROR]'), true);
+  assert.equal(isPackageAbsent('Failure [not installed for 0]'), true);
+  assert.equal(isPackageAbsent('Unknown package: com.example.app'), true);
+  assert.equal(isPackageAbsent('Success'), false);
+  // A device that is gone or full is still a real failure.
+  assert.equal(isPackageAbsent('Failure [INSUFFICIENT_STORAGE]'), false);
+  assert.equal(isPackageAbsent('error: device offline'), false);
+});
+
+test('end-of-run reclaim wipes only when it has to and never starts an emulator', async () => {
+  const calls = [];
+  const run = (command, args) => {
+    calls.push(args.join(' '));
+    if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+    if (args.includes('df')) return { status: 0, stdout: 'Filesystem 1K-blocks Used Available Use% Mounted on\n/data 8388608 1048576 7340032 13% /data\n' };
+    return { status: 0, stdout: '' };
+  };
+  const avdTarget = async () => ({ type: 'android_studio_avd', supports_avd_wipe: true });
+  let wipes = 0;
+  const wipeDevice = async () => { wipes += 1; return { status: 'PASS', avd_name: 'Test_AVD', details: 'sıfırlandı' }; };
+
+  const roomy = await reclaimDeviceStorage({
+    workspace: '.', adbExecutable: 'adb', run, detectTarget: avdTarget, wipeDevice,
+  });
+  assert.equal(roomy.status, 'SKIPPED');
+  assert.equal(roomy.free_mb, 7168);
+  assert.equal(wipes, 0, 'yer varken wipe çalıştı');
+
+  // A gate that could not restore the snapshot leaves the device dirty, and a
+  // dirty device has to be wiped however much room it has.
+  const forced = await reclaimDeviceStorage({
+    workspace: '.', adbExecutable: 'adb', run, detectTarget: avdTarget, wipeDevice, force: true,
+  });
+  assert.equal(forced.status, 'PASS');
+  assert.equal(forced.forced, true);
+  assert.equal(wipes, 1);
+
+  // Nothing attached: nothing to reclaim, and emphatically no emulator launch.
+  const idle = await reclaimDeviceStorage({
+    workspace: '.', adbExecutable: 'adb', detectTarget: avdTarget, wipeDevice,
+    run: () => ({ status: 0, stdout: 'List of devices attached\n' }),
+  });
+  assert.equal(idle.status, 'SKIPPED');
+  assert.equal(wipes, 1);
+  assert.equal(calls.some(args => args.includes('-launch') || args.includes('emulators')), false);
+});
+
+test('a physical device is never wiped by the end-of-run reclaim', async () => {
+  const result = await reclaimDeviceStorage({
+    workspace: '.', adbExecutable: 'adb', force: true,
+    detectTarget: async () => ({ type: 'physical_device', supports_avd_wipe: false }),
+    wipeDevice: async () => { throw new Error('fiziksel cihaz sıfırlandı'); },
+    run: (command, args) => (args[0] === 'devices'
+      ? { status: 0, stdout: 'List of devices attached\nR5CT30 device\n' }
+      : { status: 0, stdout: '' }),
+  });
+  assert.equal(result.status, 'SKIPPED');
+  assert.equal(result.target_type, 'physical_device');
+});
+
+test('reclaim hands its helpers a (command, args) runner, not the adb shorthand', async () => {
+  // Measured live: passing the one-argument adb helper made detectTarget read
+  // the properties of nothing and report a real Android Studio AVD as a
+  // third-party emulator, which silently disables every AVD-specific step.
+  const seen = [];
+  const result = await reclaimDeviceStorage({
+    workspace: '.', adbExecutable: 'adb', force: true,
+    run: (command, args) => {
+      if (args[0] === 'devices') return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      if (args.includes('ro.hardware')) return { status: 0, stdout: 'ranchu\n' };
+      return { status: 0, stdout: '' };
+    },
+    detectTarget: async ({ run, adb, device }) => {
+      const probe = await run(adb, ['-s', device, 'shell', 'getprop', 'ro.hardware']);
+      seen.push({ command: adb, hardware: probe.stdout.trim() });
+      return { type: 'android_studio_avd', supports_avd_wipe: true };
+    },
+    wipeDevice: async ({ run, adb, device }) => {
+      const probe = await run(adb, ['-s', device, 'emu', 'kill']);
+      seen.push({ command: adb, wiped: probe.status === 0 });
+      return { status: 'PASS', avd_name: 'Test_AVD', details: 'sıfırlandı' };
+    },
+  });
+  assert.equal(result.status, 'PASS');
+  assert.equal(result.target_type, 'android_studio_avd');
+  // Both helpers reached the real adb with the real device, rather than being
+  // handed the device id as if it were the executable.
+  assert.deepEqual(seen, [
+    { command: 'adb', hardware: 'ranchu' },
+    { command: 'adb', wiped: true },
+  ]);
+});
+
+test('a snapshot reset waits for the device to come back before handing it over', async () => {
+  const calls = [];
+  const run = (command, args) => {
+    calls.push(args.join(' '));
+    return { status: 0, stdout: args.includes('load') ? 'OK' : '' };
+  };
+  const reset = await resetAvdToSnapshot({
+    run, adb: 'adb', device: 'emulator-5554',
+    target: { type: 'android_studio_avd', supports_avd_wipe: true },
+  });
+  assert.equal(reset.status, 'PASS');
+  assert.equal(reset.mode, 'snapshot');
+  // Measured live: the first command after a load can answer "device still
+  // authorizing", and a device handed back in that state reads as unplugged.
+  assert.deepEqual(calls, [
+    '-s emulator-5554 emu avd snapshot load studio_clean',
+    '-s emulator-5554 wait-for-device',
+  ]);
+});
+
+test('the emulator console reports failure in its output, not its exit code', async () => {
+  // `adb emu avd snapshot load` exits 0 while printing KO, so reading only the
+  // exit code would call a missing snapshot a successful reset.
+  const reset = await resetAvdToSnapshot({
+    run: async () => ({ status: 0, stdout: "KO: Snapshot load failure: snapshot doesn't exist" }),
+    adb: 'adb', device: 'emulator-5554',
+    target: { type: 'android_studio_avd', supports_avd_wipe: true },
+  });
+  assert.equal(reset.status, 'UNAVAILABLE');
+  assert.equal(reset.mode, 'none');
 });

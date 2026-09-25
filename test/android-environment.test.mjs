@@ -7,9 +7,34 @@ import test from 'node:test';
 import {
   compareBuildToolsVersions, describeDeviceTarget, detectDeviceTarget, ensureBootedDevice,
   isBootCompleted, isPrereleaseBuildTools,
-  parseAvailableDataKb, parseEmulatorList, prepareDeviceForTest, probeBuildTools, resolveAvdName,
-  wipeAvdAfterTest,
+  parseAvailableDataKb, parseEmulatorList, prepareDeviceForTest, probeBuildTools,
+  readFlutterMinSdkVersion, resolveAvdName, wipeAvdAfterTest,
 } from '../src/android-environment.mjs';
+
+test('the Flutter Android floor is read from the SDK, and unknown stays unknown', () => {
+  const dartFile = 'packages/flutter_tools/lib/src/android/gradle_utils.dart';
+  const kotlinFile = 'packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt';
+  // Shapes copied from Flutter 3.44.6.
+  const contents = new Map([
+    [path.join('C:', 'flutter', dartFile), 'const minSdkVersionInt = 24;\nconst minSdkVersion = \'$minSdkVersionInt\';\n'],
+    [path.join('C:', 'flutter', kotlinFile), '    val minSdkVersion: Int = 24\n'],
+  ]);
+  const readFile = target => {
+    if (!contents.has(target)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    return contents.get(target);
+  };
+  const executable = path.join('C:', 'flutter', 'bin', 'flutter.bat');
+  assert.equal(readFlutterMinSdkVersion(executable, readFile), 24);
+
+  // The Kotlin extension mirrors the Dart constant and answers on its own.
+  contents.delete(path.join('C:', 'flutter', dartFile));
+  assert.equal(readFlutterMinSdkVersion(executable, readFile), 24);
+
+  // An SDK layout that exposes neither is reported as unknown, never guessed.
+  contents.clear();
+  assert.equal(readFlutterMinSdkVersion(executable, readFile), null);
+  assert.equal(readFlutterMinSdkVersion(null, readFile), null);
+});
 
 const CONNECTED = 'List of devices attached\nemulator-5554 device product:sdk\n';
 

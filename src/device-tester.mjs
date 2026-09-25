@@ -5,13 +5,49 @@ import { runProcess } from './async-process-runner.mjs';
 
 import {
   describeDeviceTarget, detectDeviceTarget, ensureBootedDevice, parseAdbDevices,
-  prepareDeviceForTest, wipeAvdAfterTest,
+  hasAvdSnapshot, parseAvailableDataKb, prepareDeviceForTest, resetAvdToSnapshot,
+  saveAvdSnapshot, STUDIO_CLEAN_SNAPSHOT, wipeAvdAfterTest,
 } from './android-environment.mjs';
 
 export { parseAdbDevices };
 
 const normalizePath = value => String(value || '').replaceAll('\\', '/');
 export const ADB_COMMAND_TIMEOUT_MS = 120_000;
+
+// Pulled to the host after every launch check and then left behind on the
+// device: small, but they are ours and nothing else ever removes them.
+export const DEVICE_ARTIFACTS = Object.freeze([
+  '/sdcard/ai_mvp_device_smoke.png',
+  '/sdcard/ai_mvp_device_ui.xml',
+]);
+
+// Reclaim below this much free space, not on every gate. Across a real run the
+// device never fell under 3947 MB while the gate's own minimum is 1536 MB, so
+// the unconditional reset reclaimed nothing and paid a full emulator boot for
+// it. Double the minimum leaves a gate's worth of headroom.
+export const DEFAULT_RECLAIM_BELOW_MB = 3072;
+
+/**
+ * Whether the device needs reclaiming before someone uses it again. An
+ * unmeasurable device reclaims: "we could not read the free space" is not
+ * evidence that there is room.
+ */
+export function shouldReclaimStorage(freeMb, reclaimBelowMb = DEFAULT_RECLAIM_BELOW_MB) {
+  return !Number.isFinite(freeMb) || freeMb < reclaimBelowMb;
+}
+
+/**
+ * `adb uninstall` on a package that was never installed answers
+ * `Failure [DELETE_FAILED_INTERNAL_ERROR]`, which is not the wording the
+ * "already gone" check used to look for. Two of three gates in a real run
+ * therefore reported a housekeeping failure for doing exactly what was asked.
+ * A storage or connectivity failure is still a real failure.
+ */
+export function isPackageAbsent(uninstallOutput) {
+  const text = String(uninstallOutput || '');
+  return /unknown package|not installed|delete_failed_internal_error/i.test(text)
+    && !/insufficient storage|device offline|device .*not found/i.test(text);
+}
 
 export function renderDeviceSuite(files) {
   const literal = value => JSON.stringify(value).replaceAll('$', '\\$');
@@ -144,7 +180,9 @@ const DEVICE_CHECK_ORDER = ['flow_coverage', 'device_storage', 'integration_test
  * passed all six critical flows and was still parked as WAITING because the
  * emulator console could not be reached to reset the AVD afterwards.
  */
-export const DEVICE_HOUSEKEEPING_ORDER = Object.freeze(['app_cleanup', 'avd_wipe']);
+export const DEVICE_HOUSEKEEPING_ORDER = Object.freeze([
+  'app_cleanup', 'device_artifacts', 'avd_reset',
+]);
 
 const DEVICE_CHECK_LABELS = Object.freeze({
   flow_coverage: 'Kritik akış kapsamı',
@@ -153,7 +191,8 @@ const DEVICE_CHECK_LABELS = Object.freeze({
   apk_install: 'APK kurulumu',
   launch: 'Uygulama açılışı',
   app_cleanup: 'Test sonrası hedef paket kaldırma',
-  avd_wipe: 'Test sonrası AVD temizliği',
+  device_artifacts: 'Cihazdaki ekran görüntüsü/UI dökümü temizliği',
+  avd_reset: 'Test sonrası cihaz sıfırlaması',
 });
 
 const DEVICE_CHECK_LOGS = Object.freeze({
@@ -304,7 +343,9 @@ export async function runAndroidDeviceGate({
   workspace, apkPath, packageName, flows, flutterExecutable, adbExecutable,
   run = defaultRun, acquireDevice = ensureBootedDevice,
   prepareDevice = prepareDeviceForTest, minimumFreeMb = 1536,
-  wipeDevice = wipeAvdAfterTest, detectTarget = detectDeviceTarget,
+  reclaimBelowMb = DEFAULT_RECLAIM_BELOW_MB, resetSnapshot = resetAvdToSnapshot,
+  saveSnapshot = saveAvdSnapshot, knownSnapshot = hasAvdSnapshot,
+  detectTarget = detectDeviceTarget,
 }) {
   const runDeviceCommand = (command, args) => run(command, args, {
     cwd: workspace,
@@ -315,17 +356,29 @@ export async function runAndroidDeviceGate({
   const coverage = validateFlowCoverage(workspace, flows);
   const report = {
     version: 1, generated_at: new Date().toISOString(), status: 'FAIL',
-    device: null, package_name: packageName, checks: { flow_coverage: coverage }, logs: {},
+    device: null, package_name: packageName, checks: { flow_coverage: coverage },
+    // Every phase is timed. Without this the only way to ask where a device run
+    // spends its minutes was to subtract event timestamps, which cannot separate
+    // waiting for a boot from running the tests.
+    durations_ms: {}, logs: {},
+  };
+  const timed = async (phase, action) => {
+    const startedAt = Date.now();
+    try {
+      return await action();
+    } finally {
+      report.durations_ms[phase] = Date.now() - startedAt;
+    }
   };
   if (!packageName) return { ...report, reason: 'PROJECT_SPEC package_name alanı eksik.' };
   if (!flutterExecutable) return { ...report, reason: 'Flutter executable bulunamadı.' };
   if (!adbExecutable) return { ...report, status: 'WAITING', reason: 'ADB bulunamadı.' };
   // Starts an emulator when none is connected and waits for boot completion.
-  const acquired = await acquireDevice({
+  const acquired = await timed('device_acquire', () => acquireDevice({
     run: runDeviceCommand,
     adb: adbExecutable,
     flutter: flutterExecutable,
-  });
+  }));
   report.logs.adb_devices = (acquired.log || []).join('\n');
   if (!acquired.device) {
     return {
@@ -342,50 +395,82 @@ export async function runAndroidDeviceGate({
   const target = await detectTarget({ run: runDeviceCommand, adb: adbExecutable, device: device.id });
   report.target = target;
   report.logs.device_target = describeDeviceTarget(target);
+  /** Same measurement the storage gate uses, re-read after cleanup. */
+  const measureFreeMb = async () => {
+    const disk = await runAdb(['-s', device.id, 'shell', 'df', '-k', '/data']);
+    const availableKb = parseAvailableDataKb(disk.stdout);
+    return availableKb === null ? null : Math.floor(availableKb / 1024);
+  };
   /**
    * Runs the post-test cleanup and records it in `housekeeping`. The product
    * verdict is already decided at this point, so a failure here becomes a
    * warning note instead of downgrading the result. It stays fully visible: a
    * host whose emulator can no longer be reset is a real problem, just not a
    * defect of the generated application.
+   *
+   * Cleanup removes what this gate put on the device and then decides whether
+   * the device needs reclaiming at all. It used to reset unconditionally, which
+   * across a measured run reclaimed nothing three times over and paid a 48
+   * second emulator boot each time. The full wipe is no longer done here: it is
+   * the run's last act, so no gate waits for a boot it did not need.
    */
   const finish = async result => {
+    const startedAt = Date.now();
     const removed = await runAdb(['-s', device.id, 'uninstall', packageName]);
     result.logs.app_cleanup = outputOf(removed);
-    const absent = /unknown package|not installed/i.test(outputOf(removed));
+    const absent = isPackageAbsent(outputOf(removed));
     const cleanup = {
       status: removed.status === 0 || absent ? 'PASS' : 'FAIL',
       exit_code: removed.status,
-      details: removed.status === 0 || absent
-        ? 'Hedef paket cihazdan kaldırıldı.'
-        : outputOf(removed) || 'Hedef uygulama kaldırılamadı.',
+      details: removed.status === 0 ? 'Hedef paket cihazdan kaldırıldı.'
+        : absent ? 'Hedef paket cihazda zaten yoktu.'
+          : outputOf(removed) || 'Hedef uygulama kaldırılamadı.',
     };
-    const wiped = await wipeDevice({
-      run: runDeviceCommand,
-      adb: adbExecutable, device: device.id, workspace, target,
-    });
-    result.logs.avd_wipe = wiped.log || wiped.details || '';
+    const artifacts = await runAdb(['-s', device.id, 'shell', 'rm', '-f', ...DEVICE_ARTIFACTS]);
+    const freeMb = await measureFreeMb();
+    const reclaim = shouldReclaimStorage(freeMb, reclaimBelowMb);
+    const reset = reclaim
+      ? await resetSnapshot({ run: runDeviceCommand, adb: adbExecutable, device: device.id, target })
+      : {
+        status: 'SKIPPED', mode: 'none',
+        details: `${freeMb} MB boş, eşik ${reclaimBelowMb} MB; sıfırlamaya gerek yok.`, log: '',
+      };
+    result.logs.avd_reset = [outputOf(artifacts), reset.log || reset.details]
+      .filter(Boolean).join('\n');
     result.housekeeping = {
       app_cleanup: cleanup,
-      avd_wipe: {
-        status: wiped.status, target_type: wiped.target_type ?? target.type,
-        avd_name: wiped.avd_name ?? null,
-        avd_name_source: wiped.avd_name_source ?? null,
-        details: wiped.details || 'Test sonrası AVD temizliği tamamlanamadı.',
+      device_artifacts: {
+        status: artifacts.status === 0 ? 'PASS' : 'FAIL', exit_code: artifacts.status,
+        paths: [...DEVICE_ARTIFACTS],
+        details: artifacts.status === 0 ? 'Cihazdaki ekran görüntüsü ve UI dökümü silindi.'
+          : outputOf(artifacts) || 'Cihaz artefaktları silinemedi.',
+      },
+      avd_reset: {
+        status: reset.status, mode: reset.mode ?? 'none',
+        target_type: reset.target_type ?? target.type,
+        free_mb: freeMb, reclaim_below_mb: reclaimBelowMb,
+        snapshot: reset.snapshot ?? null,
+        details: reset.details || 'Test sonrası cihaz sıfırlaması tamamlanamadı.',
       },
     };
+    // A device that could not be reclaimed must be wiped before anyone uses it
+    // again, and that is the run's problem, not this gate's verdict.
+    result.needs_full_wipe = reclaim && reset.status !== 'PASS' && reset.status !== 'SKIPPED';
+    // Not just FAIL: a reset that could not run at all ("no snapshot, wipe
+    // needed") is a housekeeping problem the run should surface too.
     const warnings = DEVICE_HOUSEKEEPING_ORDER
-      .filter(name => result.housekeeping[name]?.status === 'FAIL')
+      .filter(name => !['PASS', 'SKIPPED'].includes(result.housekeeping[name]?.status))
       .map(name => `${DEVICE_CHECK_LABELS[name]}: ${result.housekeeping[name].details}`);
     if (warnings.length) result.notes = [...(result.notes || []), ...warnings];
+    result.durations_ms = { ...(result.durations_ms || {}), housekeeping: Date.now() - startedAt };
     return result;
   };
   if (coverage.status !== 'PASS') return finish(productFailure(report));
 
-  const prepared = await prepareDevice({
+  const prepared = await timed('storage_prepare', () => prepareDevice({
     run: runDeviceCommand,
     adb: adbExecutable, device: device.id, packageName, minimumFreeMb,
-  });
+  }));
   report.logs.device_storage = prepared.log || prepared.details || prepared.reason || '';
   report.checks.device_storage = {
     status: prepared.status, free_mb: prepared.free_mb,
@@ -396,6 +481,24 @@ export async function runAndroidDeviceGate({
       ...report, status: 'WAITING', failure_kind: 'environment',
       reason: prepared.reason || 'AVD test hazırlığı tamamlanamadı.',
     });
+  }
+
+  // The reset point is recorded from the state the gate just verified: target
+  // package absent and free space above the minimum. Restoring it later takes 3
+  // seconds against 48 for a wipe-and-boot, so the one-off 31 second save pays
+  // for itself on the very next gate of the same run.
+  if (String(device.id).startsWith('emulator-') && target.supports_avd_wipe) {
+    const known = await timed('snapshot_record', async () => {
+      const listed = await knownSnapshot({ run: runDeviceCommand, adb: adbExecutable, device: device.id });
+      if (!listed.ok || listed.present) return listed;
+      return saveSnapshot({ run: runDeviceCommand, adb: adbExecutable, device: device.id });
+    });
+    report.snapshot = {
+      name: STUDIO_CLEAN_SNAPSHOT,
+      status: known.ok === false ? 'UNAVAILABLE' : 'PASS',
+      recorded: Boolean(known.ok) && !known.present,
+    };
+    report.logs.avd_snapshot = known.output || '';
   }
 
   const integrationTests = coverage.integration_tests;
@@ -412,10 +515,10 @@ export async function runAndroidDeviceGate({
   let integration;
   try {
     fs.writeFileSync(path.join(workspace, suitePath), renderDeviceSuite(integrationTests), { flag: 'wx' });
-    integration = await run(
+    integration = await timed('integration_test', () => run(
       flutterExecutable, ['test', suitePath, '-d', device.id, '--reporter', 'json', '--timeout', '120s'],
       { cwd: workspace, timeout: 180_000 + integrationTests.length * 120_000 },
-    );
+    ));
   } finally {
     fs.rmSync(path.join(workspace, suitePath), { force: true });
     restoreApkBackup(apkPath, savedApk);
@@ -435,18 +538,23 @@ export async function runAndroidDeviceGate({
   }
 
   await runAdb(['-s', device.id, 'logcat', '-c']);
-  const install = await runAdb(['-s', device.id, 'install', '-r', '-t', apkPath]);
+  const install = await timed('apk_install', () => runAdb(['-s', device.id, 'install', '-r', '-t', apkPath]));
   report.logs.apk_install = outputOf(install);
   report.checks.apk_install = { status: install.status === 0 ? 'PASS' : 'FAIL', exit_code: install.status };
   if (install.status !== 0) {
     return finish(environmentWait(report, 'apk_install', report.logs.apk_install) ?? productFailure(report));
   }
-  await runAdb(['-s', device.id, 'shell', 'am', 'force-stop', packageName]);
-  const launch = await runAdb(['-s', device.id, 'shell', 'monkey', '-p', packageName,
-    '-c', 'android.intent.category.LAUNCHER', '1']);
-  await runAdb(['-s', device.id, 'shell', 'sleep', '2']);
-  const pid = await runAdb(['-s', device.id, 'shell', 'pidof', packageName]);
-  const logcat = await runAdb(['-s', device.id, 'logcat', '-d', '-t', '800']);
+  const { launch, pid, logcat } = await timed('launch', async () => {
+    await runAdb(['-s', device.id, 'shell', 'am', 'force-stop', packageName]);
+    const started = await runAdb(['-s', device.id, 'shell', 'monkey', '-p', packageName,
+      '-c', 'android.intent.category.LAUNCHER', '1']);
+    await runAdb(['-s', device.id, 'shell', 'sleep', '2']);
+    return {
+      launch: started,
+      pid: await runAdb(['-s', device.id, 'shell', 'pidof', packageName]),
+      logcat: await runAdb(['-s', device.id, 'logcat', '-d', '-t', '800']),
+    };
+  });
   report.logs.launch = outputOf(launch);
   report.logs.logcat = outputOf(logcat);
   const fatal = /FATAL EXCEPTION|E\/flutter|Unhandled Exception/i.test(report.logs.logcat);
@@ -455,8 +563,7 @@ export async function runAndroidDeviceGate({
     process_id: String(pid.stdout || '').trim() || null, fatal_log: fatal,
   };
 
-  const remoteScreenshot = '/sdcard/ai_mvp_device_smoke.png';
-  const remoteUi = '/sdcard/ai_mvp_device_ui.xml';
+  const [remoteScreenshot, remoteUi] = DEVICE_ARTIFACTS;
   await runAdb(['-s', device.id, 'shell', 'screencap', '-p', remoteScreenshot]);
   await runAdb(['-s', device.id, 'shell', 'uiautomator', 'dump', remoteUi]);
   const logDir = path.join(workspace, 'QUALITY_LOGS');
@@ -469,6 +576,62 @@ export async function runAndroidDeviceGate({
       ?? productFailure(report));
   }
   return finish(report);
+}
+
+/**
+ * The run's last act, and the only place a full AVD wipe still happens.
+ *
+ * A snapshot restore returns the guest to a clean state in 3 seconds but cannot
+ * shrink the host image: `userdata-qemu.img.qcow2` grows with every written
+ * block and never gives the space back when files are deleted inside the guest.
+ * That is what a wipe reclaims, and it costs a 48 second boot paid by whoever
+ * needs the device next — so it runs once, after the run has finished, instead
+ * of after every gate, where it used to reclaim nothing three times over.
+ *
+ * Best effort by contract: it never launches an emulator, never throws and
+ * never touches a project's verdict. A host with no device attached simply has
+ * nothing to reclaim.
+ */
+export async function reclaimDeviceStorage({
+  workspace, adbExecutable, run = defaultRun, reclaimBelowMb = DEFAULT_RECLAIM_BELOW_MB,
+  force = false, wipeDevice = wipeAvdAfterTest, detectTarget = detectDeviceTarget,
+} = {}) {
+  const adb = adbExecutable || await resolveAdb();
+  if (!adb) return { status: 'SKIPPED', details: 'ADB bulunamadı; sıfırlanacak bir şey yok.' };
+  // Two shapes on purpose: helpers like detectTarget and wipeDevice are given
+  // the (command, args) runner they expect, while runAdb is the local shorthand.
+  const runCommand = (command, args) => run(command, args, {
+    cwd: workspace,
+    ...(command === adb ? { timeout: ADB_COMMAND_TIMEOUT_MS, timeoutLabel: 'ADB_TIMEOUT' } : {}),
+  });
+  const runAdb = args => runCommand(adb, args);
+  const listed = await runAdb(['devices', '-l']);
+  const device = parseAdbDevices(listed.stdout).find(item => item.state === 'device');
+  if (!device) return { status: 'SKIPPED', details: 'Bağlı cihaz yok; sıfırlanacak bir şey yok.' };
+  const target = await detectTarget({ run: runCommand, adb, device: device.id });
+  if (!target.supports_avd_wipe) {
+    return {
+      status: 'SKIPPED', device: device.id, target_type: target.type,
+      details: `${describeDeviceTarget(target)} için wipe uygulanmaz.`,
+    };
+  }
+  const disk = await runAdb(['-s', device.id, 'shell', 'df', '-k', '/data']);
+  const availableKb = parseAvailableDataKb(disk.stdout);
+  const freeMb = availableKb === null ? null : Math.floor(availableKb / 1024);
+  if (!force && !shouldReclaimStorage(freeMb, reclaimBelowMb)) {
+    return {
+      status: 'SKIPPED', device: device.id, target_type: target.type, free_mb: freeMb,
+      reclaim_below_mb: reclaimBelowMb,
+      details: `${freeMb} MB boş, eşik ${reclaimBelowMb} MB; wipe gerekmiyor.`,
+    };
+  }
+  const wiped = await wipeDevice({ run: runCommand, adb, device: device.id, workspace, target });
+  return {
+    status: wiped.status, device: device.id, target_type: wiped.target_type ?? target.type,
+    free_mb: freeMb, reclaim_below_mb: reclaimBelowMb, forced: Boolean(force),
+    avd_name: wiped.avd_name ?? null,
+    details: wiped.details || 'AVD wipe tamamlanamadı.',
+  };
 }
 
 export function writeDeviceReport(workspace, report) {

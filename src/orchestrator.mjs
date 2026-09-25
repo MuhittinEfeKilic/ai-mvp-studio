@@ -9,20 +9,22 @@ import { normalizePackageDependencies, readTaskPlan, writeProjectState } from '.
 import { getGitChangedPaths, pathMatchesAllowedPattern, validateChangedPaths } from './task-worktree.mjs';
 import { buildContextPackage } from './context-packager.mjs';
 import {
-  describeDeviceFailure, deviceFailureSignature, isRepairableDeviceFailure, resolveAdb,
-  runAndroidDeviceGate, writeDeviceReport,
+  DEFAULT_RECLAIM_BELOW_MB, describeDeviceFailure, deviceFailureSignature, isRepairableDeviceFailure, resolveAdb,
+  reclaimDeviceStorage, runAndroidDeviceGate, writeDeviceReport,
 } from './device-tester.mjs';
 import {
   CHECK_NAMES, normalizeQualityReport, parseReviewerResult, renderQualityReportJson,
   renderQualityReportMarkdown, validateQualityReport,
 } from './quality-report.mjs';
-import { parseEmulatorList, probeBuildTools } from './android-environment.mjs';
+import { parseEmulatorList, probeBuildTools, readFlutterMinSdkVersion } from './android-environment.mjs';
 import {
   APPLICATION_COMPLETENESS_PATH, runApplicationCompleteness, writeApplicationCompletenessReport,
 } from './app-completeness.mjs';
 import { runReleaseReadiness, writeReleaseReadinessReport } from './release-readiness.mjs';
 import { runSourceDiagnostics } from './source-diagnostics.mjs';
-import { parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec } from './spec-validator.mjs';
+import {
+  evaluateMinSdkCompatibility, parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec,
+} from './spec-validator.mjs';
 
 /**
  * Deliberately synchronous. Unlike the Flutter/Android toolchain these are local
@@ -47,6 +49,34 @@ function git(workspace, args, options = {}) {
 
 function gitChanged(workspace) {
   return Boolean(git(workspace, ['status', '--porcelain']));
+}
+
+/**
+ * Commits exactly `paths`. A narrow `git add` guarded by `gitChanged()` asks two
+ * different questions: `gitChanged()` reports whether the WORKTREE is dirty, while
+ * a pathspec-less `git commit` only commits the INDEX. Any file nobody staged
+ * makes the two disagree — the Flutter tool rewriting android/app/build.gradle.kts
+ * during the warm build is one real case — and git then exits 1 with "no changes
+ * added to commit", failing a whole run at the point where the tracked paths were
+ * simply already up to date. Scoping the question and the commit to the same paths
+ * keeps unrelated working-tree state out of the commit and never asks git to
+ * commit nothing.
+ */
+export function commitPaths(workspace, paths, message) {
+  const requested = [...new Set(paths.filter(Boolean))];
+  if (!requested.length) return false;
+  // `git add` fails hard on a pathspec that matches nothing, so an optional
+  // report a run never wrote would take the project down with it. A path is
+  // committable when it exists on disk or is still tracked — the second case is
+  // a deletion worth recording, such as a rejected TASK_PLAN.json.
+  const tracked = new Set(git(workspace, ['ls-files', '--', ...requested]).split('\n').filter(Boolean));
+  const targets = requested.filter(target =>
+    fs.existsSync(path.join(workspace, target)) || tracked.has(target));
+  if (!targets.length) return false;
+  if (!git(workspace, ['status', '--porcelain', '--', ...targets])) return false;
+  git(workspace, ['add', '--', ...targets]);
+  git(workspace, ['commit', '-m', message, '--', ...targets]);
+  return true;
 }
 
 function isPipelineGeneratedArtifact(filePath) {
@@ -143,7 +173,11 @@ export function qualityFailureSignature(report) {
       .replace(/\b\d+(?:\.\d+)?s\b/g, '<time>')
       .replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, '<clock>')
       .split(/\r?\n/)
-      .filter(line => /error|failed|exception|undefined|expected|actual|\[e\]/i.test(line))
+      // Analyzer diagnostics (`  info - ... - rule_name`) carry none of the words
+      // below, so without the severity alternative every lint-only failure hashed
+      // to the same empty signature: two unrelated lint failures looked identical
+      // and stopped the repair loop, while a real change looked like no change.
+      .filter(line => /error|failed|exception|undefined|expected|actual|\[e\]|\b(?:info|warning)\s+-\s/i.test(line))
       .slice(-40)
       .join('\n');
     return `${name}:${check.status}:${check.exit_code}:${diagnostics}`;
@@ -278,7 +312,8 @@ export class Orchestrator {
   constructor({
     database, runner, projectsDir, maxConcurrentRuns = 2, flutterChecker = null,
     deviceTester = null, maxConcurrentAgents = 5, maxParallelBuilders = 4, tokenBudget = 0,
-    deviceMinFreeMb = 1536, flutterTimeoutMs = 600_000, releaseBuilder = null,
+    deviceMinFreeMb = 1536, deviceReclaimBelowMb = DEFAULT_RECLAIM_BELOW_MB,
+    flutterTimeoutMs = 600_000, releaseBuilder = null,
   }) {
     this.database = database;
     this.runner = runner;
@@ -292,12 +327,16 @@ export class Orchestrator {
     this.busyProjects = new Set();
     this.tokenBudget = tokenBudget;
     this.deviceMinFreeMb = deviceMinFreeMb;
+    this.deviceReclaimBelowMb = deviceReclaimBelowMb;
     this.flutterTimeoutMs = flutterTimeoutMs;
     // Test seam for the release build, mirroring flutterChecker/deviceTester.
     this.releaseBuilder = releaseBuilder;
     this.releaseEvaluations = new Set();
     // Budget is per uninterrupted run: resuming is the user deciding to spend more.
     this.budgetBaseline = new Map();
+    // Projects whose device gate could not restore the clean snapshot, so the
+    // end-of-run wipe runs for them regardless of the measured free space.
+    this.pendingDeviceWipe = new Set();
     // Project and builder parallelism multiply; this caps the real Codex process
     // count across every project regardless of how those two are configured.
     this.agentSlots = new Semaphore(maxConcurrentAgents);
@@ -483,10 +522,7 @@ export class Orchestrator {
       writeReleaseReadinessReport(workspace, report);
       // Targeted commit like the quality reports: a release build churns
       // gitignored Gradle state, so an agent-style whole-tree check is wrong here.
-      git(workspace, ['add', 'RELEASE_READINESS.json']);
-      if (gitChanged(workspace)) {
-        git(workspace, ['commit', '-m', 'chore: record release readiness report']);
-      }
+      commitPaths(workspace, ['RELEASE_READINESS.json'], 'chore: record release readiness report');
       this.database.updateProject(project.id, { release_report: JSON.stringify(report) });
       this.database.addEvent(project.id, 'release_readiness.completed', {
         status: report.status,
@@ -694,9 +730,7 @@ export class Orchestrator {
     if (unexpected.length) {
       throw new Error(`Agent izin verilmeyen dosyaları değiştirdi: ${unexpected.join(', ')}`);
     }
-    if (!gitChanged(workspace)) return;
-    git(workspace, ['add', artifact]);
-    git(workspace, ['commit', '-m', message]);
+    commitPaths(workspace, [artifact], message);
   }
 
   /**
@@ -732,8 +766,7 @@ export class Orchestrator {
         });
         if (attempt === 2) throw new Error(`TASK_PLAN.json sözleşmeye uymuyor: ${error.message}`);
         fs.rmSync(planPath, { force: true });
-        git(workspace, ['add', 'TASK_PLAN.json']);
-        if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: discard rejected task plan']);
+        commitPaths(workspace, ['TASK_PLAN.json'], 'chore: discard rejected task plan');
         correction = ` The previous TASK_PLAN.json was rejected: ${error.message} Produce a corrected plan with ${minTasks}-${limit} tasks, graph width ${targetParallelism}, and at least ${targetParallelism} root tasks with empty depends_on arrays.`;
       }
     }
@@ -956,8 +989,7 @@ export class Orchestrator {
     if (result.status !== 0) {
       throw new Error(`Plan bağımlılıkları kurulamadı (${packages.join(', ')}): ${commandDetails(result)}`);
     }
-    git(workspace, ['add', 'pubspec.yaml', 'pubspec.lock']);
-    if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: install planned dependencies']);
+    commitPaths(workspace, ['pubspec.yaml', 'pubspec.lock'], 'chore: install planned dependencies');
   }
 
   async #runFlutterPreflight(projectId, workspace) {
@@ -988,13 +1020,23 @@ export class Orchestrator {
       // build-tools probe must not hold the event loop either.
       run: (executable, args) => runFlutterAsync(executable, args, workspace, this.flutterTimeoutMs),
     });
+    // Asked here, before the first agent: a spec below the toolchain's Android
+    // floor cannot be built no matter how many repair rounds run, and finding
+    // that out after the review gate costs a full run.
+    report.min_sdk = evaluateMinSdkCompatibility(
+      parseSpec(this.database.getProject(projectId).prompt).metadata,
+      readFlutterMinSdkVersion(flutter),
+    );
     report.status = report.flutter.status === 'PASS' && report.android_sdk.status === 'PASS'
-      && report.build_tools.status !== 'FAIL'
+      && report.build_tools.status !== 'FAIL' && report.min_sdk.status !== 'FAIL'
       ? 'PASS' : 'FAIL';
     const logDir = path.join(workspace, 'QUALITY_LOGS');
     fs.mkdirSync(logDir, { recursive: true });
     fs.writeFileSync(path.join(logDir, 'PREFLIGHT.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
     this.database.addEvent(projectId, 'preflight.completed', report);
+    if (report.min_sdk.status === 'FAIL') {
+      throw new Error(`Spec ile toolchain uyuşmuyor: ${report.min_sdk.details}`);
+    }
     if (report.status !== 'PASS') {
       throw new Error(`Flutter/Android preflight başarısız: ${JSON.stringify(report)}`);
     }
@@ -1008,10 +1050,7 @@ export class Orchestrator {
   async #runLocalFlutterChecks(workspace) {
     const restoredToolingManifests = ensureFlutterToolingManifests(workspace);
     if (restoredToolingManifests.length) {
-      git(workspace, ['add', ...restoredToolingManifests]);
-      if (gitChanged(workspace)) {
-        git(workspace, ['commit', '-m', 'fix: preserve Flutter tooling manifests']);
-      }
+      commitPaths(workspace, restoredToolingManifests, 'fix: preserve Flutter tooling manifests');
     }
     if (this.flutterChecker) return this.flutterChecker(workspace);
     const skipped = details => ({ checks: {
@@ -1034,7 +1073,16 @@ export class Orchestrator {
       checks.apk = { status: 'SKIPPED', details: 'Bağımlılık çözümleme başarısız olduğu için çalıştırılmadı.', path: null };
       return { profile: 'flutter_mobile', checks, logs };
     }
-    for (const [name, args] of [['analyze', ['analyze']], ['test', ['test']], ['apk', ['build', 'apk', '--debug']]]) {
+    // `flutter analyze` exits 1 on any finding, info level included, so a single
+    // style suggestion used to fail the gate, skip `test` and `apk` and burn every
+    // repair round. `--no-fatal-infos` keeps errors and warnings blocking while an
+    // info stays visible in the report and the log without failing the run.
+    const checkCommands = [
+      ['analyze', ['analyze', '--no-fatal-infos']],
+      ['test', ['test']],
+      ['apk', ['build', 'apk', '--debug']],
+    ];
+    for (const [name, args] of checkCommands) {
       const result = await runFlutterAsync(flutter, args, workspace, this.flutterTimeoutMs);
       logs[name] = fullCommandOutput(result);
       checks[name] = {
@@ -1067,19 +1115,20 @@ export class Orchestrator {
     const report = normalizeQualityReport(combined);
     fs.writeFileSync(path.join(workspace, 'TEST_REPORT.json'), renderQualityReportJson(report), 'utf8');
     fs.writeFileSync(path.join(workspace, 'TEST_REPORT.md'), renderQualityReportMarkdown(report), 'utf8');
-    git(workspace, ['add', 'TEST_REPORT.json', 'TEST_REPORT.md']);
-    if (gitChanged(workspace)) git(workspace, ['commit', '-m', message]);
+    commitPaths(workspace, ['TEST_REPORT.json', 'TEST_REPORT.md'], message);
     return report;
   }
 
-  #writeRootCauseReport(workspace, { attempts, signature, report }) {
+  #writeRootCauseReport(workspace, { attempts, signature, report, reason = 'repeated' }) {
     const failures = CHECK_NAMES
       .map(name => `## ${name}\n\nDurum: ${report.checks[name].status}\n\n${report.checks[name].details || 'Detay yok.'}`)
       .join('\n\n');
     const body = [
       '# Pipeline Kök Neden Raporu', '',
       `Repair turu: ${attempts}`, `Hata imzası: \`${signature}\``, '',
-      'Aynı kalite hatası iki ardışık kontrolde değişmeden kaldığı için otomatik döngü durduruldu.', '',
+      reason === 'repeated'
+        ? 'Aynı kalite hatası iki ardışık kontrolde değişmeden kaldığı için otomatik döngü durduruldu.'
+        : 'Repair turu üst sınırına ulaşıldığı hâlde kalite kapısı PASS olmadığı için durduruldu.', '',
       failures, '', 'Tam komut çıktıları `QUALITY_LOGS/` dizinindedir.', '',
     ].join('\n');
     fs.writeFileSync(path.join(workspace, 'ROOT_CAUSE_REPORT.md'), body, 'utf8');
@@ -1107,13 +1156,7 @@ export class Orchestrator {
       }));
       // Path-scoped like the release report: the completeness run must not sweep
       // unrelated working-tree state into a commit of its own.
-      if (git(workspace, ['status', '--porcelain', '--', APPLICATION_COMPLETENESS_PATH])) {
-        git(workspace, ['add', APPLICATION_COMPLETENESS_PATH]);
-        git(workspace, [
-          'commit', '-m', 'chore: record application completeness report',
-          '--', APPLICATION_COMPLETENESS_PATH,
-        ]);
-      }
+      commitPaths(workspace, [APPLICATION_COMPLETENESS_PATH], 'chore: record application completeness report');
       this.database.updateProject(projectId, { completeness_report: JSON.stringify(report) });
       this.database.addEvent(projectId, 'application_completeness.completed', {
         status: report.status,
@@ -1141,9 +1184,20 @@ export class Orchestrator {
         flutterExecutable: await resolveFlutter(workspace, this.flutterTimeoutMs),
         adbExecutable: await resolveAdb(),
         minimumFreeMb: this.deviceMinFreeMb,
+        reclaimBelowMb: this.deviceReclaimBelowMb,
       });
+    // A gate that could not restore the snapshot leaves the device dirty; the
+    // end-of-run wipe then runs whatever the free space says.
+    if (report.needs_full_wipe) this.pendingDeviceWipe.add(projectId);
     writeDeviceReport(workspace, report);
-    this.#commitArtifact(workspace, 'DEVICE_REPORT.json', 'test: record Android device report');
+    // Path-scoped, not #commitArtifact: that helper rejects the commit when ANY
+    // other file is dirty, which is right for an agent worktree but wrong here.
+    // The orchestrator has just run Flutter, Gradle and adb against this very
+    // workspace, and those legitimately rewrite files it owns — a Flutter
+    // gradle migration touching android/app/build.gradle.kts was reported as
+    // "Agent izin verilmeyen dosyaları değiştirdi" and failed a passing run,
+    // losing the device result before it could be recorded.
+    commitPaths(workspace, ['DEVICE_REPORT.json'], 'test: record Android device report');
     this.database.updateProject(projectId, { device_report: JSON.stringify(report) });
     this.database.addEvent(projectId, 'device_test.completed', report);
     // Only a host/emulator problem parks the project; a product failure is
@@ -1552,7 +1606,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         repeatedFailureCount = signature === previousFailureSignature ? repeatedFailureCount + 1 : 1;
         if (repeatedFailureCount >= 2) {
           this.#writeRootCauseReport(workspace, {
-            attempts: repairAttempts, signature, report: checkReport,
+            attempts: repairAttempts, signature, report: checkReport, reason: 'repeated',
           });
           this.database.updateTask(taskId(id, 'repair'), {
             status: 'failed',
@@ -1575,7 +1629,9 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
       }
       if (checkReport.status !== 'PASS') {
         const signature = qualityFailureSignature(checkReport);
-        this.#writeRootCauseReport(workspace, { attempts: repairAttempts, signature, report: checkReport });
+        this.#writeRootCauseReport(workspace, {
+          attempts: repairAttempts, signature, report: checkReport, reason: 'exhausted',
+        });
         this.database.updateTask(taskId(id, 'repair'), {
           status: 'failed', error: 'Üç repair turu sonunda kalite kapısı PASS değil.',
         });
@@ -1703,6 +1759,37 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
       this.#syncProjectState(id, workspace);
     } catch (error) {
       this.database.updateProject(id, { status: this.#failureStatus(error), error: error.message });
+    } finally {
+      await this.#reclaimDeviceStorage(id, workspace);
+    }
+  }
+
+  /**
+   * The full AVD wipe, once, after the run has finished either way.
+   *
+   * It used to happen inside every device gate, which across a measured run
+   * reclaimed nothing three times and charged a 48 second emulator boot to
+   * whichever gate came next. The gate now restores a snapshot in 3 seconds and
+   * leaves the host image — the thing a snapshot cannot shrink — to this step.
+   *
+   * Strictly best effort: no device attached means nothing to reclaim, and a
+   * failure here is recorded as an event and never touches the project's
+   * verdict, which was decided before this ran.
+   */
+  async #reclaimDeviceStorage(projectId, workspace) {
+    if (!this.#deviceGateEnabled() || this.deviceTester) return;
+    try {
+      const result = await reclaimDeviceStorage({
+        workspace,
+        adbExecutable: await resolveAdb(),
+        reclaimBelowMb: this.deviceReclaimBelowMb,
+        force: this.pendingDeviceWipe.delete(projectId),
+      });
+      this.database.addEvent(projectId, 'device_reclaim.completed', result);
+    } catch (error) {
+      this.database.addEvent(projectId, 'device_reclaim.completed', {
+        status: 'FAIL', details: error.message,
+      });
     }
   }
 }

@@ -95,6 +95,44 @@ export function isPrereleaseBuildTools(version) {
   return PRERELEASE.test(String(version));
 }
 
+// Both files carry the same number and each says so; the Dart constant is the one
+// `flutter.minSdkVersion` resolves to, the Kotlin extension is its mirror.
+const FLUTTER_MIN_SDK_SOURCES = Object.freeze([
+  {
+    file: 'packages/flutter_tools/lib/src/android/gradle_utils.dart',
+    pattern: /const\s+minSdkVersionInt\s*=\s*(\d+)\s*;/,
+  },
+  {
+    file: 'packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt',
+    pattern: /val\s+minSdkVersion\s*:\s*Int\s*=\s*(\d+)/,
+  },
+]);
+
+/**
+ * The lowest Android API this Flutter SDK will build for, read from the SDK
+ * itself rather than assumed. Flutter does not merely warn below this floor: its
+ * `MinSdkVersionMigration` rewrites any `minSdk` of 16-23 to
+ * `minSdk = flutter.minSdkVersion` on every Gradle-touching command, so a lower
+ * value an agent writes is silently reverted and no amount of repair converges.
+ *
+ * Returns null when the SDK layout does not expose the constant. Nothing is
+ * guessed from a version string: an unknown floor is reported as unknown.
+ */
+export function readFlutterMinSdkVersion(flutterExecutable, readFile = fs.readFileSync) {
+  if (!flutterExecutable) return null;
+  // <root>/bin/flutter[.bat] — the executable is always one directory below root.
+  const root = path.dirname(path.dirname(flutterExecutable));
+  for (const source of FLUTTER_MIN_SDK_SOURCES) {
+    try {
+      const match = source.pattern.exec(readFile(path.join(root, source.file), 'utf8'));
+      if (match) return Number(match[1]);
+    } catch {
+      // Missing or unreadable file: try the mirror, then report unknown.
+    }
+  }
+  return null;
+}
+
 /**
  * Verifies that the build-tools Gradle would reach for actually run. A crashing
  * `aapt` (observed once as exit -1073741502 under a release candidate) fails the
@@ -242,11 +280,92 @@ export async function detectDeviceTarget({ run, adb, device }) {
   return target;
 }
 
+export const STUDIO_CLEAN_SNAPSHOT = 'studio_clean';
+
 /**
- * Factory-resets the test AVD. Wiping is an AVD-specific operation, so every
- * other supported target is skipped rather than reported as broken: there is
- * nothing to reset on a third-party emulator or a physical device, and the run
- * that validated the product is not worse for it.
+ * `adb emu` talks to the emulator console, which reports failure in its OUTPUT
+ * and still exits 0: a missing snapshot answers `KO: Snapshot load failure`
+ * with exit code 0. Reading only the exit code would call every failure a
+ * success, so the console verdict is read from the text.
+ */
+function emuConsoleResult(result) {
+  const output = [result.stdout, result.stderr, result.error?.message]
+    .filter(Boolean).join('\n').trim();
+  return { ok: result.status === 0 && !/\bKO\b/.test(output), output };
+}
+
+export async function loadAvdSnapshot({ run, adb, device, name = STUDIO_CLEAN_SNAPSHOT }) {
+  return emuConsoleResult(await run(adb, ['-s', device, 'emu', 'avd', 'snapshot', 'load', name]));
+}
+
+export async function saveAvdSnapshot({ run, adb, device, name = STUDIO_CLEAN_SNAPSHOT }) {
+  return emuConsoleResult(await run(adb, ['-s', device, 'emu', 'avd', 'snapshot', 'save', name]));
+}
+
+/**
+ * Whether the reset point already exists. `ok: false` means the console could
+ * not answer, which is not the same as "no snapshot" and must not trigger a
+ * 31 second save against a device we cannot talk to.
+ */
+export async function hasAvdSnapshot({ run, adb, device, name = STUDIO_CLEAN_SNAPSHOT }) {
+  const result = emuConsoleResult(await run(adb, ['-s', device, 'emu', 'avd', 'snapshot', 'list']));
+  if (!result.ok) return { ok: false, present: false, output: result.output };
+  const present = result.output.split(/\r?\n/)
+    .some(line => line.trim().split(/\s+/).includes(name));
+  return { ok: true, present, output: result.output };
+}
+
+/**
+ * Restores the device to the recorded clean state without taking it down.
+ * Measured on a real AVD: loading the snapshot takes 3 seconds, the emulator
+ * never disconnects and `sys.boot_completed` is already 1, against 48 seconds
+ * for `-wipe-data -no-snapshot-save` — whose cost then lands on the NEXT gate,
+ * because the relaunch is fire-and-forget and someone has to wait for the boot.
+ *
+ * Only the reset is claimed here, never a pristine device: the snapshot records
+ * the state the gate verified before its own test — target package absent and
+ * enough free space — so restoring it returns exactly that. Deleting the
+ * snapshot makes the next full wipe record a new one.
+ */
+export async function resetAvdToSnapshot({ run, adb, device, target = null, name = STUDIO_CLEAN_SNAPSHOT }) {
+  if (!String(device || '').startsWith('emulator-')) {
+    return { status: 'SKIPPED', mode: 'none', details: 'Fiziksel Android cihaz sıfırlanmadı.', log: '' };
+  }
+  if (target && !target.supports_avd_wipe) {
+    return {
+      status: 'SKIPPED', mode: 'none', target_type: target.type,
+      details: `${describeDeviceTarget(target)} için AVD sıfırlaması uygulanmaz.`, log: '',
+    };
+  }
+  const loaded = await loadAvdSnapshot({ run, adb, device, name });
+  if (loaded.ok) {
+    // Measured live: the first command after a load can answer "device still
+    // authorizing". Handing the device back in that state would make the next
+    // gate see nothing attached and start a second emulator.
+    const settled = await run(adb, ['-s', device, 'wait-for-device']);
+    return {
+      status: 'PASS', mode: 'snapshot', snapshot: name,
+      details: `Cihaz ${name} anlık görüntüsünden yerinde sıfırlandı.`,
+      log: [loaded.output, settled.stdout, settled.stderr].filter(Boolean).join('\n').trim(),
+    };
+  }
+  return {
+    status: 'UNAVAILABLE', mode: 'none', snapshot: name,
+    details: `${name} anlık görüntüsü yüklenemedi; tam wipe gerekiyor.`, log: loaded.output,
+  };
+}
+
+/**
+ * Factory-resets the test AVD and relaunches it clean. Wiping is an AVD-specific
+ * operation, so every other supported target is skipped rather than reported as
+ * broken: there is nothing to reset on a third-party emulator or a physical
+ * device, and the run that validated the product is not worse for it.
+ *
+ * This is the expensive path — measured at 48 seconds for the boot alone, paid
+ * by whoever needs the device next — so it reclaims what a snapshot cannot: the
+ * host `userdata-qemu.img.qcow2` grows with every written block and never
+ * shrinks when files are deleted inside the guest. Prefer `resetAvdToSnapshot`
+ * between gates and keep this for end-of-run reclamation.
  */
 export async function wipeAvdAfterTest({
   run, adb, device, workspace, target = null, launch = launchEmulator, sleep = wait,

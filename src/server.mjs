@@ -21,6 +21,7 @@ const orchestrator = new Orchestrator({
   maxParallelBuilders: config.maxParallelBuilders,
   tokenBudget: config.projectTokenBudget,
   deviceMinFreeMb: config.deviceMinFreeMb,
+  deviceReclaimBelowMb: config.deviceReclaimBelowMb,
   flutterTimeoutMs: config.flutterTimeoutMs,
 });
 const indexPath = path.join(config.root, 'src', 'mvp_studio', 'static', 'index.html');

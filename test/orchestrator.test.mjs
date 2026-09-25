@@ -1080,6 +1080,47 @@ const passingChecker = workspace => ({ checks: {
   apk: { status: 'PASS', exit_code: 0, path: createFakeApk(workspace) },
 } });
 
+test('a toolchain rewrite during the device gate does not fail the run or join its commit', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-device-commit-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  const rewritten = path.join('android', 'app', 'build.gradle.kts');
+  const orchestrator = new Orchestrator({
+    database, runner: new FakeRunner(), projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1, flutterChecker: passingChecker,
+    deviceTester: ({ workspace }) => {
+      // What Flutter itself does mid-gate: MinSdkVersionMigration rewrites
+      // android/app/build.gradle.kts while the orchestrator runs Gradle and adb.
+      // No agent touched it, so treating a dirty worktree as an agent violation
+      // failed a run whose gates had all passed — and lost the device result,
+      // because the throw happened before the report reached the database.
+      fs.mkdirSync(path.dirname(path.join(workspace, rewritten)), { recursive: true });
+      fs.writeFileSync(path.join(workspace, rewritten), 'android { defaultConfig { minSdk = 24 } }\n');
+      return { status: 'PASS', checks: { flow_coverage: { status: 'PASS' } }, logs: {} };
+    },
+  });
+  const project = orchestrator.createProject('Cihaz Commit', fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'odak-mini', 'PROJECT_SPEC.md',
+  ), 'utf8'));
+
+  const settled = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+  assert.equal(settled.status, 'awaiting_user_review', settled.error);
+  assert.equal(JSON.parse(settled.device_report).status, 'PASS', 'cihaz sonucu kaydedilmedi');
+
+  const git = (...args) => spawnSync('git', args, {
+    cwd: project.workspace_path, encoding: 'utf8', windowsHide: true,
+  }).stdout.trim();
+  assert.equal(git('log', '--format=%s', '--', 'DEVICE_REPORT.json'), 'test: record Android device report');
+  // Scoped: the file the toolchain rewrote is recorded nowhere near that commit.
+  const deviceCommit = git('log', '--format=%H', '--', 'DEVICE_REPORT.json');
+  assert.equal(git('show', '--name-only', '--pretty=', deviceCommit), 'DEVICE_REPORT.json');
+  // A later whole-tree stage does record the rewritten file, which is fine. What
+  // must not happen is it blocking the gate or riding along in the report commit.
+  const gradleCommit = git('log', '-1', '--format=%H', '--', rewritten.replaceAll(path.sep, '/'));
+  assert.notEqual(gradleCommit, '', 'toolchain dosyası hiçbir commit\'e girmedi');
+  assert.notEqual(gradleCommit, deviceCommit, 'toolchain dosyası cihaz raporu commit\'ine karıştı');
+  database.close();
+});
+
 test('release readiness runs only after the product validation flow has been accepted', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-release-gate-'));
   const database = new Database(path.join(directory, 'studio.db'));

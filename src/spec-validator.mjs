@@ -99,6 +99,39 @@ export function parseAcceptanceCriteria(markdown) {
     .map((text, index) => ({ id: `AC${index + 1}`, text }));
 }
 
+/**
+ * Compares the minimum Android API the spec asks for against the floor the
+ * installed toolchain enforces. A spec below that floor cannot be satisfied at
+ * all: Flutter rewrites the value back on every Gradle command, so the reviewer
+ * blocks, the repair agent fixes the file, the next gate reverts it and the loop
+ * runs out of rounds. Measured on a real run: three repair rounds, two review
+ * rounds and 568k billable tokens spent on a requirement no agent could meet.
+ *
+ * Pure on purpose — `validateSpec` cannot probe the toolchain, so the floor is
+ * passed in. An unknown floor yields SKIPPED: an unmeasured requirement is not
+ * reported as met.
+ */
+export function evaluateMinSdkCompatibility(metadata = {}, toolchainMinSdk = null) {
+  const requested = Number(String(metadata.min_android_sdk ?? '').trim());
+  const floor = Number(toolchainMinSdk);
+  if (!Number.isInteger(requested) || requested <= 0) {
+    return { status: 'SKIPPED', spec_min_sdk: null, toolchain_min_sdk: toolchainMinSdk ?? null,
+      details: 'Spec `min_android_sdk` değeri okunamadı.' };
+  }
+  if (!Number.isInteger(floor) || floor <= 0) {
+    return { status: 'SKIPPED', spec_min_sdk: requested, toolchain_min_sdk: null,
+      details: 'Toolchain minimum Android API değeri okunamadı.' };
+  }
+  if (requested < floor) {
+    return { status: 'FAIL', spec_min_sdk: requested, toolchain_min_sdk: floor,
+      details: `Spec minimum Android API ${requested} istiyor, kurulu Flutter yalnız API ${floor} ve üstünü destekliyor. `
+        + `Flutter bu değeri her Gradle komutunda \`flutter.minSdkVersion\` (${floor}) olarak geri yazar, `
+        + `bu yüzden istek hiçbir onarım turuyla karşılanamaz. Spec'i API ${floor} veya üstüne çekin.` };
+  }
+  return { status: 'PASS', spec_min_sdk: requested, toolchain_min_sdk: floor,
+    details: `Spec minimum Android API ${requested}, toolchain tabanı API ${floor}.` };
+}
+
 export function validateSpec(markdown) {
   const { metadata, sections, text } = parseSpec(markdown);
   const blocking_issues = [];
