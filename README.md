@@ -406,7 +406,12 @@ Reviewer çıktısı şu şekli almak zorundadır:
   ilke. İkinci çıktı da geçersizse proje normal biçimde başarısız olur; döngü yoktur.
 
 Reviewer bloklarsa en fazla iki hedefli Review Repair turu uygulanır; her turdan sonra
-kalite ve cihaz kapıları yeniden koşar. Bulgular değişmezse döngü durur ve gerekçeler
+kalite ve cihaz kapıları yeniden koşar. **Review Repair da kod yazan bir agent'tır ve
+kendi düzeltmesiyle kalite kapısını kırabilir**, bu yüzden ondan sonraki kalite kapısı
+da sınırlı onarım hakkı taşır (2 tur; ana hatta 3). Ölçülen vaka: cihaz kapısı 8/8
+PASS geçmiş bir koşuda reviewer tek kritere takıldı, Review Repair istenen iki renk
+tokenını düzeltti ve bunu yaparken dört widget testini kırdı — eski davranışta koşu
+tek bir onarım hakkı bile olmadan düşüyordu. Bulgular değişmezse döngü durur ve gerekçeler
 proje hatasına yazılır.
 
 ## Uygulama bütünlüğü
@@ -538,6 +543,11 @@ devam ettirilebilir biçimde `failed` olur. Kontrol agent'lar arasında yapılı
 bir Codex'i öldürmek işini kaybettirirdi. Bütçe kesintisiz bir çalışma içindir: devam
 ettirmek yeni bir bütçe başlatır, çünkü resume bilerek verilmiş bir harcama kararıdır.
 
+Codex'in durma nedeni **kendi JSONL olay akışından** okunur, yalnız stderr'den değil:
+kullanım limiti `{"type":"error","message":…}` ve `{"type":"turn.failed",…}` olarak
+gelir ve stderr boş kalır. Yalnız stderr okumak, duraklamayı genel bir çıkış kodu
+mesajına indirgiyor ve devam ettirilebilir bir projeyi `failed` olarak park ediyordu.
+
 **Checkpoint ve devam.** Her agent başlamadan önce mevcut Git commit'i checkpoint olarak
 SQLite'a kaydedilir; Codex thread kimliği ve bildirdiği token kullanımı da agent
 çalışmasına eklenir. Codex kullanım limiti veya context penceresi nedeniyle durursa proje
@@ -609,7 +619,7 @@ npm test
 ```
 
 `npm run check` 17 birinci taraf `src/*.mjs` modülünün sözdizimini denetler. `npm test`
-**190 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
+**196 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
 worktree/path izolasyonu, checkpoint, kalite ve inceleme sözleşmeleri, kaynak teşhis
 taraması, cihaz kapısı, cihaz hedefi sınıflandırması, emülatör otomasyonu, süreç timeout
 semantiği, event loop canlılığı, path-scoped commit davranışı, analiz şiddet

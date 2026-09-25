@@ -84,6 +84,13 @@ export class CodexRunner {
       let buffer = '';
       let stderr = '';
       let finalMessage = '';
+      // Codex reports why it stopped through its own JSONL stream, not on
+      // stderr: a usage limit arrives as {"type":"error","message":…} followed
+      // by {"type":"turn.failed","error":{"message":…}}. Reading only stderr
+      // left the runner with nothing to say, so a measured run reported the
+      // generic "Codex 1 çıkış koduyla sonlandı." — which matches none of the
+      // pause patterns and parked a perfectly resumable project as `failed`.
+      let streamError = '';
       let settled = false;
       let timedOut = false;
       // Without this the slot is held forever by a hung Codex process.
@@ -108,6 +115,13 @@ export class CodexRunner {
           onEvent(event.type ?? 'unknown', event);
           if (event.type === 'item.completed' && event.item?.type === 'agent_message') {
             finalMessage = event.item.text ?? finalMessage;
+          }
+          // The first reported reason wins: a later, vaguer one must not mask it.
+          if (!streamError) {
+            const reported = event.type === 'error'
+              ? event.message
+              : (event.type === 'turn.failed' ? event.error?.message : null);
+            if (reported) streamError = String(reported).trim();
           }
         } catch { onEvent('unparsed_output', { text: line }); }
       };
@@ -137,8 +151,13 @@ export class CodexRunner {
       child.once('close', code => {
         settle(() => {
           consumeLine(buffer);
-          const details = [stderr.trim(), stdinError && `prompt yazılamadı: ${stdinError.message}`]
-            .filter(Boolean).join('\n');
+          // Codex's own reason first: it is the only one that says whether this
+          // is a usage limit, a context window or a genuine failure.
+          const details = [
+            streamError,
+            stderr.trim(),
+            stdinError && `prompt yazılamadı: ${stdinError.message}`,
+          ].filter(Boolean).join('\n');
           if (timedOut) {
             reject(new Error(`Codex ${formatDuration(this.timeoutMs)} içinde tamamlanmadı ve süreç sonlandırıldı.`));
           } else if (code === 0 && !stdinError) {

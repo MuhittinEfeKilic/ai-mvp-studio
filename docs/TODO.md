@@ -2,7 +2,7 @@
 
 Son güncelleme: 23 Eylül 2026
 
-Son tam kontrol: `npm run check` başarılı, `npm test` **190/190 PASS**.
+Son tam kontrol: `npm run check` başarılı, `npm test` **196/196 PASS**.
 `npm run test:minimal-live` gerçek Codex ile uçtan uca geçiyor (tek canlı çağrı).
 Release hazırlığı gerçek Flutter toolchain'inde `Akış Cep` üzerinde `READY` üretti.
 Uygulama bütünlüğü değerlendiricisi 10 üretilmiş repository üzerinde koşuldu:
@@ -136,6 +136,39 @@ Tam gerekçeler için `git log`; sözleşme hâline gelenler `PROJECT_STATUS.md`
   taban Flutter SDK kaynağından okunuyor, okunamazsa `SKIPPED`.
 - Mobil template varsayılanı `min_android_sdk: "24"`; önceki `"23"` her yeni
   spec'e karşılanamaz bir gereksinim kopyalıyordu.
+
+**Review Repair kendi kırdığını onarabiliyor (26 Eylül 2026)**
+
+- Kalite kapısını PASS'e sürükleyen döngü `#settleQualityGate` içine alındı ve iki
+  yoldan da çağrılıyor: ana hat (3 tur) ve Review Repair sonrası (2 tur).
+- Eskiden Review Repair sonrası `validateQualityReport` ilk seferde PASS talep
+  ediyordu; kapı düşerse koşu **tek bir onarım hakkı bile olmadan** ölüyordu.
+- Sınırlar korunuyor: aynı imza iki kez tekrarlarsa erken durur ve
+  `ROOT_CAUSE_REPORT.md` yazılır.
+
+**Ölçülen kanıt:** `Sipariş Defteri` koşusunda cihaz kapısı 8/8 PASS geçti,
+reviewer AC1–AC12'nin yalnız AC11'ine takıldı (semantik renk tokenları ana
+ekranlarda uygulanmamıştı), Review Repair istenen iki düzeltmeyi yaptı ve bunu
+yaparken dört widget testini kırdı (`AppColorsContext.appColors` test ortamında
+null). Proje `Kalite raporu geçersiz: test FAIL, apk SKIPPED` ile düştü — oysa
+aynı hata ana hatta olsa üç onarım turu alırdı.
+
+**Codex duraklamaları artık `failed` görünmüyor (25 Eylül 2026)**
+
+- `codex-runner` Codex'in JSONL akışındaki ilk hata mesajını (`type:"error"` veya
+  `type:"turn.failed"`) yakalayıp reddetme mesajına taşıyor. Önceden yalnız stderr
+  okunuyordu; Codex durma nedenini oraya yazmadığı için mesaj genel çıkış koduna
+  indirgeniyor ve `classifyInterruption` hiçbir şey göremiyordu.
+- `classifyInterruption` export edildi; "Codex ne dedi → proje nasıl park edilir"
+  gidiş-dönüşü artık test edilebiliyor.
+- Gerçek çökme hâlâ `failed`: akışta da stderr'de de bir şey yoksa çıkış kodu
+  mesajı korunuyor, uydurma duraklama üretilmiyor.
+
+**Ölçülen kanıt:** `Sipariş Defteri` (`99c447beb0d8`) koşusu 1.075.521 token
+harcayıp Integration'ı tamamladıktan sonra Repair turunda Codex kullanım limitine
+takıldı. Codex `"You've hit your usage limit… try again at 9:57 PM."` mesajını
+olay akışından bildirdi, stderr boştu; proje `paused_usage` yerine `failed`
+oldu. Düzeltmeyle aynı senaryo artık `usage` olarak sınıflanıyor.
 
 **Ayrılmış test AVD'si ve cihaz seçimi (25 Eylül 2026)**
 

@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { CodexRunner } from '../src/codex-runner.mjs';
+import { classifyInterruption } from '../src/orchestrator.mjs';
 
 function scriptRunner(body, options) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-runner-'));
@@ -60,4 +61,71 @@ test('a Codex process that exits before reading the prompt fails the run, not th
     '',
   ].join('\n'), { timeoutMs: 10_000 });
   assert.equal(await survivor.runner.run({ workspace: survivor.workspace, prompt: 'merhaba', onEvent: () => {} }), 'ayakta');
+});
+
+test('a Codex stop reported on its event stream is not flattened into an exit code', async () => {
+  // The measured shape: Codex answers the usage limit through its own JSONL
+  // stream and writes nothing to stderr, then exits 1. Reading only stderr left
+  // the runner saying "Codex 1 çıkış koduyla sonlandı.", which matches no pause
+  // pattern — so a project that only had to wait was parked as `failed`.
+  const limit = "You've hit your usage limit. Upgrade to Pro or try again at 9:57 PM.";
+  const { workspace, runner } = scriptRunner([
+    `const message = ${JSON.stringify(limit)};`,
+    'process.stdout.write(JSON.stringify({ type: "error", message }) + "\\n");',
+    'process.stdout.write(JSON.stringify({ type: "turn.failed", error: { message } }) + "\\n");',
+    'process.exit(1);',
+  ].join('\n'));
+
+  const events = [];
+  await assert.rejects(
+    runner.run({ workspace, prompt: 'merhaba', onEvent: type => events.push(type) }),
+    error => {
+      assert.match(error.message, /usage limit/i);
+      assert.doesNotMatch(error.message, /çıkış koduyla sonlandı/);
+      // And the whole point: the orchestrator can now see what kind of stop it was.
+      assert.equal(classifyInterruption(error.message), 'usage');
+      return true;
+    },
+  );
+  assert.ok(events.includes('error'), 'hata olayı iletilmedi');
+});
+
+test('a context-window stop is classified as a context pause, not a failure', async () => {
+  const { workspace, runner } = scriptRunner([
+    'const message = "Your input exceeds the context window of this model.";',
+    'process.stdout.write(JSON.stringify({ type: "turn.failed", error: { message } }) + "\\n");',
+    'process.exit(1);',
+  ].join('\n'));
+  await assert.rejects(
+    runner.run({ workspace, prompt: 'merhaba', onEvent: () => {} }),
+    error => {
+      assert.equal(classifyInterruption(error.message), 'context');
+      return true;
+    },
+  );
+});
+
+test('a genuine crash still reports the exit code and stays a failure', async () => {
+  // Nothing on the event stream and nothing on stderr: there is no reason to
+  // invent a pause, and the run must not look resumable when it is not.
+  const { workspace, runner } = scriptRunner('process.exit(3);\n');
+  await assert.rejects(
+    runner.run({ workspace, prompt: 'merhaba', onEvent: () => {} }),
+    error => {
+      assert.match(error.message, /Codex 3 çıkış koduyla sonlandı/);
+      assert.equal(classifyInterruption(error.message), null);
+      return true;
+    },
+  );
+});
+
+test('stderr is still reported when Codex says nothing on its event stream', async () => {
+  const { workspace, runner } = scriptRunner([
+    'process.stderr.write("codex: cannot find configuration\\n");',
+    'process.exit(2);',
+  ].join('\n'));
+  await assert.rejects(
+    runner.run({ workspace, prompt: 'merhaba', onEvent: () => {} }),
+    /cannot find configuration/,
+  );
 });

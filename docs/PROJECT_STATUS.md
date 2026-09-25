@@ -69,7 +69,7 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **190/190 test**. Cihaz temizliği ayrımı, cihaz hedefi
+- Studio regresyonu: **196/196 test**. Cihaz temizliği ayrımı, cihaz hedefi
   sınıflandırması, AVD adı fallback'i, reviewer sözleşme düzeltmesi, Codex stdin
   arızası, bayat APK yedeği kurtarması, deterministik process timeout'u, event loop
   canlılığı, path-scoped commit davranışı, analiz şiddet politikası,
@@ -213,9 +213,14 @@ değiştirmezler. Hata ve uyarı bloklamaya devam eder.
 
 | Kapı | Sahibi olduğu şey | Onarım turu | Erken durma |
 | --- | --- | --- | --- |
-| Kalite (`TEST_REPORT.json`) | `analyze` (`--no-fatal-infos`), `test`, `apk`, `diagnostics` | 3 | Aynı hata imzası iki turda tekrarlarsa → `ROOT_CAUSE_REPORT.md` |
+| Kalite (`TEST_REPORT.json`) | `analyze` (`--no-fatal-infos`), `test`, `apk`, `diagnostics` | 3 (review repair sonrası 2) | Aynı hata imzası iki turda tekrarlarsa → `ROOT_CAUSE_REPORT.md` |
 | Cihaz (`DEVICE_REPORT.json`) | `flow_coverage`, `integration_test`, `apk_install`, `launch` | 2 | Aynı imza tekrarı veya düzeltilemez bulgu → `DEVICE_ROOT_CAUSE_REPORT.md` |
 | İnceleme | Kabul kriterleri, akış bütünlüğü, kapsam | 2 | Bulgular değişmezse durur; gerekçe hataya yazılır |
+
+Kalite kapısını PASS'e sürükleyen döngü tek yerdedir (`#settleQualityGate`) ve iki
+yoldan da çağrılır: ana hat ve Review Repair sonrası. Eskiden ikincisi ilk seferde
+PASS talep ediyordu; kod yazan bir agent'ın kendi düzeltmesiyle kapıyı kırması
+hâlinde koşu **hiç onarım hakkı olmadan** ölüyordu.
 
 Kapılar **yetkilidir**: reviewer bunların sonuçlarını yeniden yargılamaz, PASS'i
 kanıt kabul eder. Her onarım turundan sonra kod değiştiği için alt kapılar yeniden
@@ -334,7 +339,14 @@ Bu oturumda gerçekten zaman kaybettiren şeyler:
    düşürmesi demekti. Şiddet politikası artık komutun kendisinde:
    `--no-fatal-infos`. Toolchain'in çıkış kodunu ürün kararına çevirirken hangi
    şiddetin bloklaması gerektiğini her zaman açıkça seçin.
-8. **Toolchain ana workspace'i de değiştirir; agent sanmayın.** `#commitArtifact`
+8. **Codex durma nedenini stderr'e yazmaz.** Kullanım limiti ve context penceresi
+   kendi JSONL akışından gelir (`type:"error"`, `type:"turn.failed"`). Yalnız
+   stderr okuyan bir hata yolu, duraklamayı `Codex 1 çıkış koduyla sonlandı.`
+   mesajına indirger; bu hiçbir duraklama kalıbına uymaz ve proje `paused_usage`
+   yerine `failed` olur. Ölçülen koşu: `Sipariş Defteri` 1.075.521 token
+   harcadıktan sonra Repair turunda limite takıldı ve yanlış etiketlendi.
+   `codex-runner` artık akıştaki ilk hata mesajını hataya taşıyor.
+9. **Toolchain ana workspace'i de değiştirir; agent sanmayın.** `#commitArtifact`
    "artefakt dışında kirli dosya varsa agent sınırı aşmıştır" der. Bu bir agent
    worktree'sinde doğrudur, ana workspace'te değildir: orada `flutter create`,
    `pub get`, `pub add`, ısınma derlemesi ve cihaz kapısı komutlarını
@@ -346,13 +358,13 @@ Bu oturumda gerçekten zaman kaybettiren şeyler:
    (`orchestrator.mjs:748`); Coordinator'dan önce toolchain bir dosya yazarsa aynı
    yanlış suçlama oradan gelir. Bugün tetiklenmedi, çünkü iskeletin `minSdk`
    değeri zaten migration'ın hedefi değil.
-9. **Spec toolchain'in yasakladığını isteyebilir.** Flutter yalnız uyarmaz:
+10. **Spec toolchain'in yasakladığını isteyebilir.** Flutter yalnız uyarmaz:
    `MinSdkVersionMigration` 16–23 arası her `minSdk` değerini Gradle'a dokunan her
    komutta geri yazar. Böyle bir gereksinim hiçbir onarım turuyla karşılanamaz;
    reviewer bloklar, repair düzeltir, kapı geri alır, turlar biter. Preflight artık
    bunu ilk agent'tan önce engelliyor. Yeni bir platform gereksinimi eklerken
    "toolchain bunu geri yazar mı" sorusunu sorun.
-10. **Hata imzası filtresi analiz bulgularını görmüyordu.** `qualityFailureSignature`
+11. **Hata imzası filtresi analiz bulgularını görmüyordu.** `qualityFailureSignature`
    yalnız `error|failed|exception|…` kelimelerini taşıyan satırları alıyordu;
    `  info - … - rule_name` satırında bunların hiçbiri yok, bu yüzden bütün
    lint-only arızalar aynı boş imzaya hash'leniyordu — iki farklı lint "aynı hata"

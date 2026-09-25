@@ -1263,3 +1263,136 @@ test('an app that passes every gate is still measured for obvious incompleteness
   )));
   database.close();
 });
+
+test('a review repair that breaks the build gets a repair round, not a dead run', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-review-repair-breaks-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  const repairPrompts = [];
+  let reviews = 0;
+  let brokenByReviewRepair = false;
+
+  // Measured: the device gate passed 8/8, the reviewer blocked on one criterion,
+  // the review repair applied exactly the two colour-token fixes it was asked
+  // for — and broke four widget tests doing so. The run died on the spot,
+  // because that path demanded a first-time PASS while the identical failure on
+  // the main line would have had three repair rounds.
+  class ReviewerThatBlocksOnce extends FakeRunner {
+    async run(options) {
+      if (options.prompt.includes('Review repair turu')) {
+        fs.writeFileSync(path.join(options.workspace, 'review-fix.txt'), 'renk tokenları düzeltildi');
+        brokenByReviewRepair = true;
+        options.onEvent('turn.completed', { type: 'turn.completed' });
+        return 'Bulgu giderildi.';
+      }
+      if (options.prompt.includes('Repair turu')) {
+        repairPrompts.push(options.prompt);
+        brokenByReviewRepair = false;
+        options.onEvent('turn.completed', { type: 'turn.completed' });
+        return 'Kırılan widget testleri onarıldı.';
+      }
+      if (!/Review the complete|response JSON only/i.test(options.prompt)) return super.run(options);
+      reviews += 1;
+      options.onEvent('turn.completed', { type: 'turn.completed' });
+      return reviews === 1
+        ? fakeReview(options.workspace, {
+          status: 'FAIL',
+          issues: [{ file: 'lib/widgets/stock_strip.dart:43', description: 'Semantik warning tokenı uygulanmıyor.' }],
+        })
+        : fakeReview(options.workspace);
+    }
+  }
+
+  const orchestrator = new Orchestrator({
+    database,
+    runner: new ReviewerThatBlocksOnce(),
+    projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1,
+    flutterChecker: workspace => ({ checks: {
+      analyze: { status: 'PASS', exit_code: 0 },
+      test: brokenByReviewRepair
+        ? { status: 'FAIL', exit_code: 1, details: 'AppColorsContext.appColors null döndü' }
+        : { status: 'PASS', exit_code: 0 },
+      apk: brokenByReviewRepair
+        ? { status: 'SKIPPED', details: 'Önceki kontrol başarısız olduğu için çalıştırılmadı.' }
+        : { status: 'PASS', exit_code: 0, path: createFakeApk(workspace) },
+    } }),
+    deviceTester: () => ({ status: 'PASS', checks: { flow_coverage: { status: 'PASS' } }, logs: {} }),
+  });
+  const spec = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'odak-mini', 'PROJECT_SPEC.md',
+  ), 'utf8');
+  const project = orchestrator.createProject('Odak Mini', spec);
+  const completed = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+
+  assert.equal(completed.status, 'awaiting_user_review', completed.error);
+  // Exactly one quality repair round: enough to recover, not an open loop.
+  assert.equal(repairPrompts.length, 1, 'review repair sonrası kalite onarımı çalışmadı');
+  assert.match(repairPrompts[0], /Repair turu 1\/2/);
+  assert.equal(reviews, 2, 'düzeltmeden sonra yeniden inceleme yapılmadı');
+  database.close();
+});
+
+test('a review repair whose breakage cannot be fixed still fails, with the reason recorded', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-review-repair-stuck-'));
+  const database = new Database(path.join(directory, 'studio.db'));
+  const repairPrompts = [];
+
+  class ReviewerThenPermanentBreakage extends FakeRunner {
+    async run(options) {
+      if (options.prompt.includes('Review repair turu')) {
+        fs.writeFileSync(path.join(options.workspace, 'review-fix.txt'), 'düzeltildi');
+        options.onEvent('turn.completed', { type: 'turn.completed' });
+        return 'Bulgu giderildi.';
+      }
+      if (options.prompt.includes('Repair turu')) {
+        repairPrompts.push(options.prompt);
+        options.onEvent('turn.completed', { type: 'turn.completed' });
+        return 'Denendi.';
+      }
+      if (!/Review the complete|response JSON only/i.test(options.prompt)) return super.run(options);
+      options.onEvent('turn.completed', { type: 'turn.completed' });
+      return fakeReview(options.workspace, {
+        status: 'FAIL',
+        issues: [{ file: 'lib/a.dart:1', description: 'Token uygulanmıyor.' }],
+      });
+    }
+  }
+
+  let gateRuns = 0;
+  const orchestrator = new Orchestrator({
+    database,
+    runner: new ReviewerThenPermanentBreakage(),
+    projectsDir: path.join(directory, 'projects'),
+    maxConcurrentRuns: 1,
+    flutterChecker: workspace => {
+      gateRuns += 1;
+      // The first gate passes so the run reaches the reviewer; everything after
+      // the review repair stays broken however many times it is retried.
+      return gateRuns === 1
+        ? { checks: {
+          analyze: { status: 'PASS', exit_code: 0 }, test: { status: 'PASS', exit_code: 0 },
+          apk: { status: 'PASS', exit_code: 0, path: createFakeApk(workspace) },
+        } }
+        : { checks: {
+          analyze: { status: 'PASS', exit_code: 0 },
+          test: { status: 'FAIL', exit_code: 1, details: 'kalıcı kırık' },
+          apk: { status: 'SKIPPED', details: 'Önceki kontrol başarısız olduğu için çalıştırılmadı.' },
+        } };
+    },
+    deviceTester: () => ({ status: 'PASS', checks: { flow_coverage: { status: 'PASS' } }, logs: {} }),
+  });
+  const spec = fs.readFileSync(path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'odak-mini', 'PROJECT_SPEC.md',
+  ), 'utf8');
+  const project = orchestrator.createProject('Odak Mini', spec);
+  const settled = await waitForStatus(database, project.id, ['awaiting_user_review', 'failed']);
+
+  assert.equal(settled.status, 'failed');
+  // Bounded, and the same failure twice stops it before the second round.
+  assert.ok(repairPrompts.length <= 2, `sınırsız onarım: ${repairPrompts.length}`);
+  assert.ok(
+    fs.existsSync(path.join(settled.workspace_path, 'ROOT_CAUSE_REPORT.md')),
+    'kök neden raporu yazılmadı',
+  );
+  database.close();
+});

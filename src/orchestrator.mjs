@@ -265,7 +265,7 @@ function branchAhead(workspace, branch) {
   return Boolean(git(workspace, ['log', '--oneline', `main..${branch}`]));
 }
 
-function classifyInterruption(message) {
+export function classifyInterruption(message) {
   if (/context window|maximum context|context length/i.test(message)) return 'context';
   if (/usage limit|rate limit|quota|too many requests|429/i.test(message)) return 'usage';
   return null;
@@ -289,6 +289,11 @@ const MAX_DEVICE_REPAIR_ROUNDS = 2;
 
 /** A review round replays the quality and device gates, so it is expensive too. */
 const MAX_REVIEW_REPAIR_ROUNDS = 2;
+
+const MAX_QUALITY_REPAIR_ROUNDS = 3;
+// A review repair is a smaller, targeted edit than a first-pass build, so it
+// gets fewer rounds — but not zero, which is what it used to get.
+const MAX_REVIEW_QUALITY_REPAIR_ROUNDS = 2;
 
 /**
  * Single source of truth for how many builder tasks a spec may be split into.
@@ -1143,6 +1148,64 @@ export class Orchestrator {
     return report;
   }
 
+  /**
+   * Drives the quality gate to PASS, repairing a bounded number of times and
+   * stopping early when a round changes nothing.
+   *
+   * Shared on purpose. The review-repair path used to demand a first-time PASS
+   * instead, and a measured run died there: the device gate had passed 8/8, the
+   * reviewer blocked on a single criterion, the review repair applied exactly
+   * the two colour-token fixes it was asked for and broke four widget tests
+   * doing so — with no repair round at all, while the identical failure on the
+   * main line would have had three. An agent that writes code can break code,
+   * whichever gate asked it to write.
+   */
+  async #settleQualityGate(projectId, workspace, { report, rounds, verifyMessage }) {
+    const repairTask = taskId(projectId, 'repair');
+    let checkReport = report;
+    let attempts = 0;
+    let previousSignature = null;
+    let repeated = 0;
+    if (checkReport.status !== 'PASS') this.#readyTasks(projectId, ['repair'], 1);
+    while (checkReport.status !== 'PASS' && attempts < rounds) {
+      const signature = qualityFailureSignature(checkReport);
+      repeated = signature === previousSignature ? repeated + 1 : 1;
+      if (repeated >= 2) {
+        this.#writeRootCauseReport(workspace, {
+          attempts, signature, report: checkReport, reason: 'repeated',
+        });
+        this.database.updateTask(repairTask, {
+          status: 'failed',
+          error: `Aynı kalite hatası tekrarlandı (${signature}). ROOT_CAUSE_REPORT.md oluşturuldu.`,
+        });
+        throw new Error(`Repair döngüsü aynı hata nedeniyle durduruldu (${signature}).`);
+      }
+      previousSignature = signature;
+      attempts += 1;
+      this.database.updateTask(repairTask, { status: 'pending', error: null });
+      await this.#runAgent({
+        projectId, taskKey: 'repair', agentName: 'Repair Agent', role: 'repair', workspace,
+        prompt: `Repair turu ${attempts}/${rounds}. Read TEST_REPORT.md and the referenced QUALITY_LOGS files. Fix only the reported Flutter analyze/test/build failures and source diagnostics findings. A diagnostics finding means an error is swallowed: keep the caught error, surface a specific message and log or rethrow it. Do not widen the fix beyond the reported locations. Do not run flutter, dart, pub or Gradle commands; the orchestrator re-runs all checks after your changes. Do not expand scope or change planning documents. Previous failure signature: ${signature}.`,
+      });
+      git(workspace, ['add', '-A']);
+      if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'fix: repair Flutter test failures']);
+      checkReport = this.#writeQualityReports(
+        workspace, await this.#runLocalFlutterChecks(workspace), verifyMessage,
+      );
+    }
+    if (checkReport.status !== 'PASS') {
+      const signature = qualityFailureSignature(checkReport);
+      this.#writeRootCauseReport(workspace, {
+        attempts, signature, report: checkReport, reason: 'exhausted',
+      });
+      this.database.updateTask(repairTask, {
+        status: 'failed', error: `${rounds} repair turu sonunda kalite kapısı PASS değil.`,
+      });
+      throw new Error(`${rounds} repair turu sonunda Flutter kalite kapısı geçilemedi.`);
+    }
+    return checkReport;
+  }
+
   #writeRootCauseReport(workspace, { attempts, signature, report, reason = 'repeated' }) {
     const failures = CHECK_NAMES
       .map(name => `## ${name}\n\nDurum: ${report.checks[name].status}\n\n${report.checks[name].details || 'Detay yok.'}`)
@@ -1652,46 +1715,11 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
       );
       this.#completeTask(id, 'test', workspace, JSON.stringify(checkReport));
 
-      this.#readyTasks(id, ['repair'], 1);
-      let repairAttempts = 0;
-      let previousFailureSignature = null;
-      let repeatedFailureCount = 0;
-      while (checkReport.status !== 'PASS' && repairAttempts < 3) {
-        const signature = qualityFailureSignature(checkReport);
-        repeatedFailureCount = signature === previousFailureSignature ? repeatedFailureCount + 1 : 1;
-        if (repeatedFailureCount >= 2) {
-          this.#writeRootCauseReport(workspace, {
-            attempts: repairAttempts, signature, report: checkReport, reason: 'repeated',
-          });
-          this.database.updateTask(taskId(id, 'repair'), {
-            status: 'failed',
-            error: `Aynı kalite hatası tekrarlandı (${signature}). ROOT_CAUSE_REPORT.md oluşturuldu.`,
-          });
-          throw new Error(`Repair döngüsü aynı hata nedeniyle durduruldu (${signature}).`);
-        }
-        previousFailureSignature = signature;
-        repairAttempts += 1;
-        this.database.updateTask(taskId(id, 'repair'), { status: 'pending', error: null });
-        await this.#runAgent({
-          projectId: id, taskKey: 'repair', agentName: 'Repair Agent', role: 'repair', workspace,
-          prompt: `Repair turu ${repairAttempts}/3. Read TEST_REPORT.md and the referenced QUALITY_LOGS files. Fix only the reported Flutter analyze/test/build failures and source diagnostics findings. A diagnostics finding means an error is swallowed: keep the caught error, surface a specific message and log or rethrow it. Do not widen the fix beyond the reported locations. Do not run flutter, dart, pub or Gradle commands; the orchestrator re-runs all checks after your changes. Do not expand scope or change planning documents. Previous failure signature: ${signature}.`,
-        });
-        git(workspace, ['add', '-A']);
-        if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'fix: repair Flutter test failures']);
-        checkReport = this.#writeQualityReports(
-          workspace, await this.#runLocalFlutterChecks(workspace), 'test: verify repaired Flutter project',
-        );
-      }
-      if (checkReport.status !== 'PASS') {
-        const signature = qualityFailureSignature(checkReport);
-        this.#writeRootCauseReport(workspace, {
-          attempts: repairAttempts, signature, report: checkReport, reason: 'exhausted',
-        });
-        this.database.updateTask(taskId(id, 'repair'), {
-          status: 'failed', error: 'Üç repair turu sonunda kalite kapısı PASS değil.',
-        });
-        throw new Error('Üç repair turu sonunda Flutter kalite kapısı geçilemedi.');
-      }
+      checkReport = await this.#settleQualityGate(id, workspace, {
+        report: checkReport,
+        rounds: MAX_QUALITY_REPAIR_ROUNDS,
+        verifyMessage: 'test: verify repaired Flutter project',
+      });
       let verifiedReport = validateQualityReport(checkReport, { workspace });
       this.#completeTask(id, 'repair', workspace, checkReport.status === 'PASS' ? 'Kalite kapısı geçti.' : 'Repair completed.');
 
@@ -1780,11 +1808,17 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
           if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'fix: apply mobile review findings']);
           this.#completeTask(id, repairTaskId, workspace, `Review repair turu ${round + 1} uygulandı.`);
 
-          // The code changed, so every downstream gate has to speak again.
+          // The code changed, so every downstream gate has to speak again — and
+          // a review repair is an agent edit like any other, so it gets the same
+          // bounded chance to fix what it broke.
           this.database.updateProject(id, { status: 'testing' });
-          verifiedReport = validateQualityReport(this.#writeQualityReports(
-            workspace, await this.#runLocalFlutterChecks(workspace), 'test: verify review repair',
-          ), { workspace });
+          verifiedReport = validateQualityReport(await this.#settleQualityGate(id, workspace, {
+            report: this.#writeQualityReports(
+              workspace, await this.#runLocalFlutterChecks(workspace), 'test: verify review repair',
+            ),
+            rounds: MAX_REVIEW_QUALITY_REPAIR_ROUNDS,
+            verifyMessage: 'test: verify review repair',
+          }), { workspace });
           this.database.updateProject(id, {
             quality_report: JSON.stringify(verifiedReport),
             artifact_path: path.join(workspace, verifiedReport.checks.apk.path),
