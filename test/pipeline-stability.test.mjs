@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  builderTaskPolicy, commitPaths, ensureFlutterToolingManifests, ensureProjectGitignore,
+  builderTaskPolicy, commitPaths, ensureFlutterToolingManifests, ensureProjectGitignore, ensureSpecContracts,
   qualityFailureSignature, runFlutterAsync,
 } from '../src/orchestrator.mjs';
 
@@ -234,4 +234,57 @@ test('the failure signature separates two different lint-only failures', () => {
   // the error words the filter looks for, so both used to hash to the same value
   // and the loop could stop on "the same error" after a real fix.
   assert.notEqual(qualityFailureSignature(nullAware), qualityFailureSignature(otherLint));
+});
+
+const CONTRACT_SPEC = [
+  '# Kritik Kullanıcı Akışları',
+  '',
+  '### CF1 — Kayıt oluşturma',
+  '1. Kullanıcı formu açar.',
+  '2. Alanları doldurur.',
+  '3. Kaydeder.',
+  '- Beklenen sonuç: kayıt listede görünür.',
+  '',
+  '# Kabul Kriterleri',
+  '',
+  '### AC1 — Kalıcılık',
+  'Kayıt yeniden açılışta korunur.',
+  '',
+  '### AC2 — Doğrulama',
+  'Geçersiz tutar veritabanına ulaşmaz.',
+].join('\n');
+
+test('a project created before the parser understood its spec gets its contracts back', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-contracts-'));
+  // Measured: a spec wrote its criteria as `### AC1 — …` headings, the parser of
+  // the day read none, ACCEPTANCE_CRITERIA.json was never written, and a missing
+  // file empties expectedCriteria — which switches the reviewer's id contract
+  // off without failing anything. The run that followed lost a review repair
+  // round to a criterion the reviewer invented.
+  const written = ensureSpecContracts(workspace, CONTRACT_SPEC);
+  assert.deepEqual(written.sort(), ['ACCEPTANCE_CRITERIA.json', 'USER_FLOWS.json']);
+
+  const criteria = JSON.parse(fs.readFileSync(path.join(workspace, 'ACCEPTANCE_CRITERIA.json'), 'utf8'));
+  assert.deepEqual(criteria.criteria.map(item => item.id), ['AC1', 'AC2']);
+  const flows = JSON.parse(fs.readFileSync(path.join(workspace, 'USER_FLOWS.json'), 'utf8'));
+  assert.equal(flows.profile, 'flutter_mobile');
+  assert.equal(flows.flows.length, 1);
+
+  // Idempotent, and the contract a project was built against is the one it keeps:
+  // a later spec edit must not silently renumber what the reviewer already answered.
+  fs.writeFileSync(path.join(workspace, 'ACCEPTANCE_CRITERIA.json'), '{"version":1,"criteria":[]}\n');
+  assert.deepEqual(ensureSpecContracts(workspace, CONTRACT_SPEC), []);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(workspace, 'ACCEPTANCE_CRITERIA.json'), 'utf8')).criteria,
+    [],
+  );
+});
+
+test('a spec with nothing parseable leaves no empty contract behind', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-contracts-empty-'));
+  // An empty checklist is worse than no file: it would read as "the reviewer may
+  // block on nothing" instead of "this project has no contract yet".
+  assert.deepEqual(ensureSpecContracts(workspace, '# Kabul Kriterleri\n\nDüzgün çalışmalı.\n'), []);
+  assert.equal(fs.existsSync(path.join(workspace, 'ACCEPTANCE_CRITERIA.json')), false);
+  assert.equal(fs.existsSync(path.join(workspace, 'USER_FLOWS.json')), false);
 });

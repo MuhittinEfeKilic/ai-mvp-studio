@@ -2,7 +2,7 @@
 
 Son güncelleme: 23 Eylül 2026
 
-Son tam kontrol: `npm run check` başarılı, `npm test` **170/170 PASS**.
+Son tam kontrol: `npm run check` başarılı, `npm test` **190/190 PASS**.
 `npm run test:minimal-live` gerçek Codex ile uçtan uca geçiyor (tek canlı çağrı).
 Release hazırlığı gerçek Flutter toolchain'inde `Akış Cep` üzerinde `READY` üretti.
 Uygulama bütünlüğü değerlendiricisi 10 üretilmiş repository üzerinde koşuldu:
@@ -18,41 +18,7 @@ bölümlerine taşınmıştır; tam metinleri `git log` içindedir.
 `npm run check` ve `npm test` çalıştırılmalı, ardından `PROJECT_STATUS.md`
 güncellenmelidir.
 
-### 1. `AboneCep`'i düzeltilmiş hatta karşı yeniden koş
-
-- [ ] Panelden `1c30b97a4b89` projesini checkpoint'ten devam ettir.
-- [ ] Cihaz raporu commit'inin artık `Agent izin verilmeyen dosyaları değiştirdi`
-  ile düşmediğini ve sonucun veritabanına yazıldığını doğrula.
-- [ ] Reviewer'ın artık minimum Android API üzerinden bloklamadığını doğrula.
-- [ ] Kararsız görünen cihaz testlerini izle: üç koşuda üç **farklı** integration
-  testi düştü (`active_filter`, `edit_subscription`, `search_subscription`), her
-  turda öncekiler PASS'e döndü. Aynı kusur mu, zamanlama/flake mi karar ver.
-
-**Bulgu:** bu proje dört Studio kusurunu arka arkaya ortaya çıkardı ve dördü de
-kapatıldı.
-
-1. Kalite kapısı tek bir `info` lint'inde düştü; üç onarım turu buna harcandı.
-2. Her devam denemesi `chore: install planned dependencies` commit'inde git'in
-   "no changes added to commit" hatasıyla öldü.
-3. Düzeltmelerden sonra koşu cihaz kapısını PASS geçti, ama cihaz raporu commit'i
-   Flutter'ın gradle migration'ını agent ihlali sanıp koşuyu düşürdü — üstelik
-   cihaz sonucu kaydedilmeden önce.
-4. Spec, Flutter 3.44'ün desteklemediği minimum Android API 23 istiyordu; reviewer
-   haklı olarak blokluyor, repair düzeltiyor, sonraki kapı geri alıyordu. Bu koşu
-   **568.045 faturalanabilir token** harcadı.
-
-Spec'in `min_android_sdk` değeri ve ilgili satırı API 24'e çekildi (dosya ve
-`projects.prompt` birlikte, `318d2a8`). Proje kaydı `failed` olarak **bilerek
-bırakıldı**; temiz bir koşu sonraki doğrulamadır.
-
-**Yan bulgu — reviewer kapsam aşımı.** Reviewer `minSdk` bulgusunu `AC10` üzerinden
-blokladı, ama `AC10` "Mobil kullanılabilirlik" kriteri ve minimum API'den hiç söz
-etmiyor. Sözleşme reviewer'ı yalnız kriter kimlikleriyle bloklamaya zorluyor, o da
-bulgusunu en yakın kritere iliştirdi. Kriter metniyle bulgu arasındaki ilişkiyi
-mekanik olarak denetlemek bugün mümkün değil; ayrı bir madde hâline gelmeden önce
-ikinci bir örnek görmek gerekir.
-
-### 2. `Akış Cep` cihaz kapısını güncel semantikte yeniden koş
+### 1. `Akış Cep` cihaz kapısını güncel semantikte yeniden koş
 
 - [ ] Panelden "Cihaz testini yeniden dene" ile projeyi devam ettir.
 - [ ] Sonucun PASS olduğunu ve `housekeeping.avd_reset` alanının `SKIPPED`
@@ -62,7 +28,7 @@ ikinci bir örnek görmek gerekir.
 geçmişi bozmamak için **bilerek değiştirilmedi**. Güncel semantikte PASS üreteceği
 hem kayıtlı rapordan hem canlı `wipeAvdAfterTest` ölçümünden doğrulandı.
 
-### 3. Eski örnek projeleri güncel sözleşmelerle yeniden üret
+### 2. Eski örnek projeleri güncel sözleşmelerle yeniden üret
 
 - [ ] `Servis Cep` — kritik akış sözleşmesinden önce üretildi; `USER_FLOWS.json` ve
   `integration_test/` içermiyor, cihaz kapısı `isRepairableDeviceFailure` ile hemen
@@ -70,7 +36,7 @@ hem kayıtlı rapordan hem canlı `wipeAvdAfterTest` ölçümünden doğrulandı
 - [ ] `Stok Cep` — eski cihaz koşusunun başarısız kaydı; yeniden denemeden önce
   güncel ortam kapısı ve stabil Android build-tools ile değerlendirilmeli.
 
-### 4. Bütünlük ölçümünü gerçek bir koşuda gör ve sonraki dilime karar ver
+### 3. Bütünlük ölçümünü gerçek bir koşuda gör ve sonraki dilime karar ver
 
 - [ ] Yeni bir koşuda `APPLICATION_COMPLETENESS.json` üretildiğini ve panelin
   Doğrulama sekmesinde göründüğünü doğrula.
@@ -84,7 +50,7 @@ olarak ölçülebilen kısmı; bugünkü kapsam dışı listesi
 [PROJECT_STATUS.md → Uygulama bütünlüğü](PROJECT_STATUS.md#uygulama-bütünlüğü)
 içindedir.
 
-### 5. Review Repair'i gerçek bir koşuda gör
+### 4. Review Repair'i gerçek bir koşuda gör
 
 - [ ] Reviewer'ı bloklayan bir koşuda onarım döngüsünün ve geçmiş bulgu
   aktarımının çalıştığını doğrula.
@@ -92,7 +58,7 @@ içindedir.
 Zorlanacak bir şey değil; şu an yalnız birim testleriyle korunuyor. Bir koşu
 reviewer'ı bloklarsa doğal olarak sınanır.
 
-### 6. Rol bazlı model / reasoning effort seçimi
+### 5. Rol bazlı model / reasoning effort seçimi
 
 İleriye dönük; bugün bir arızayı kapatmıyor, maliyet ve kalite kaldıracı olarak
 isteniyor. İki yarısı var ve **ilki tek başına da değerli**:
@@ -170,6 +136,88 @@ Tam gerekçeler için `git log`; sözleşme hâline gelenler `PROJECT_STATUS.md`
   taban Flutter SDK kaynağından okunuyor, okunamazsa `SKIPPED`.
 - Mobil template varsayılanı `min_android_sdk: "24"`; önceki `"23"` her yeni
   spec'e karşılanamaz bir gereksinim kopyalıyordu.
+
+**Ayrılmış test AVD'si ve cihaz seçimi (25 Eylül 2026)**
+
+- `MVP_STUDIO_AVD` ile cihaz kapısının kullanacağı AVD sabitlenebiliyor. Pin
+  yalnız başlatmayı değil **kullanımı** da sınırlıyor: adı doğrulanamayan bağlı
+  bir cihaz benimsenmiyor, çünkü birinin kişisel emülatörünü wipe etmek geri
+  alınamaz.
+- `npm start` artık `--env-file-if-exists=.env` ile çalışıyor. Önceden `.env`
+  hiç okunmuyordu; `.env.example` yalnız belgeydi.
+- `studio_test_api36` AVD'si kuruldu: `google_apis` (Play Store'suz) API 36
+  x86_64, 4096 MB RAM, 512 MB heap, 6 GB veri bölümü, GPU açık, 6 çekirdek.
+  Ekran profili bilerek küçük bırakıldı ve `hw.keyboard=no` korundu — yazılım
+  klavyesi gerçekçi davranış, ve yerleşim kusurlarını erken gösteriyor.
+- `avdmanager`'ın varsayılanları düzeltildi: veri bölümü `<temp>` idi (kalıcı
+  değil) ve `hw.gpu.enabled=no` idi (yazılım render).
+
+**Ölçülen kanıt:** pin olmadan `selectEmulator` `Medium_Phone_API_36.0`'ı,
+pinle `studio_test_api36`'yı seçiyor. Yeni AVD ilk açılışta 39 saniyede boot
+etti; `ro.hardware=ranchu`, `emu avd name` → `studio_test_api36`, `/data`
+5.8 GB bölümde 4.8 GB boş.
+
+**Cihaz testi kırılganlığı adlandırılıyor (25 Eylül 2026)**
+
+- `src/integration-test-diagnostics.mjs`: metin girildikten sonra odak
+  bırakılmadan ve kaydırma yapılmadan yapılan **varlık** iddialarını bildiren
+  deterministik tarama. Kapı değil; `DEVICE_REPORT.json` → `test_diagnostics`.
+- Kapı FAIL verdiğinde bulgular `notes` alanına da yazılıyor, böylece device
+  repair agent'ı doğru hipotezden başlıyor.
+- Coordinator, builder, Test Strategy ve device repair prompt'larına aynı kural
+  eklendi: iddiadan önce odağı bırak ya da hedefi görünür yap.
+
+**Ölçülen kanıt:** aynı projenin iki koşusunda üç test aynı sınıftan düştü
+(`active_filter`, `edit_subscription`, `search_subscription`), toplam dört device
+repair turu. Tarama gerçek korpusta 9 dosyadan **2**'sini işaretliyor — biri tam
+olarak iki tura mal olan `search_subscription_test.dart`. `edit_subscription`
+işaretlenmiyor çünkü onarımda eklenen `tester.ensureVisible` riski kaldırıyor;
+yani kural, onarım agent'larının gerçekte yaptığı düzeltmeyi tanıyor.
+
+**Kabul kriteri sözleşmesi artık sessizce devre dışı kalamıyor (25 Eylül 2026)**
+
+- `parseAcceptanceCriteria` `### AC1 — Başlık` biçimini de tanıyor. Kimlik
+  **spec'ten** okunur, konumdan değil: reviewer aynı belgeyi okuduğu için
+  yeniden numaralandırmak onun yanıtlarını sözleşmeye yabancı yapardı.
+- `validateSpec`, "Kabul Kriterleri" bölümü dolu ama **ayrıştırılamıyorsa** engel
+  bildiriyor; kimlik tekrarı da engel. Eskiden bölümün dolu olması yetiyordu.
+- `ensureSpecContracts` her koşu başında eksik sözleşme dosyasını idempotent
+  olarak onarıyor, böylece parser onları okuyamadan önce üretilmiş projeler de
+  kazanıyor. **Mevcut dosya asla yeniden yazılmaz**: bir projenin inşa edildiği
+  sözleşme, spec sonradan düzenlense bile onundur.
+- `createProject` ile onarım aynı yazıcıyı kullanıyor; iki şekil birbirinden
+  kayamaz.
+
+**Ölçülen kanıt:** `AboneCep` spec'i on kriteri `###` başlıklarıyla yazmıştı;
+eski ayrıştırıcı **0**, yenisi **10** kriter döndürüyor (`AC1..AC10`, spec'in
+kendi kimlikleri) ve sekiz kritik akış. O projede `ACCEPTANCE_CRITERIA.json`
+hiç yazılmadığı için `expectedCriteria` boştu ve `validateReviewerResult`
+içindeki bütün kimlik denetimleri atlanıyordu — reviewer listede olmayan bir
+`Q1` kimliği uydurup projeyi onunla blokladı ve bir review repair turuna mal
+oldu. Sonraki koşuda dosya kendiliğinden onarılacak.
+
+**`AboneCep` düzeltilmiş hatta karşı yeniden koşuldu (25 Eylül 2026)**
+
+Dört Studio kusurunun da gerçek bir koşuda kapandığı doğrulama. Koşu
+**20 dk 37 sn** sürdü, **449.228 faturalanabilir token** harcadı ve
+`awaiting_user_review` ile bitti: kalite kapısı PASS, cihaz kapısı 8/8 PASS,
+reviewer AC1–AC10 PASS, uygulama bütünlüğü `COMPLETE` (0 blocker, 0 uyarı).
+
+- Preflight `min_sdk` PASS (spec 24 / toolchain 24) — yeni kapı ilk kez koştu.
+- `flutter analyze --no-fatal-infos` ile kalite kapısı geçildi.
+- Cihaz raporu dört kez commit edildi; `build.gradle.kts` yine kirliydi ve
+  koşu **düşmedi**.
+- `avd_reset` dört kapıda da `SKIPPED` (boş alan hep 3.8 GB üstü, eşik 3072 MB).
+  `device_acquire` 81–136 ms: emülatör hiç düşmedi. Eski davranışta bu dört kapı
+  4 × 48 sn soğuk açılış ≈ **3,2 dakika** boşa harcayacaktı.
+- Koşu sonu `device_reclaim.completed`: `SKIPPED — 3992 MB boş`.
+- Cihaz kapısı iki kez `search_subscription_test.dart` üzerinde FAIL verdi.
+  Ürün mantığı doğruydu (`clearConstraints()` aramayı ve filtreleri sıfırlıyor);
+  kusur render tarafındaydı: `enterText` sonrası Android klavyesi açık kalınca
+  `SliverList.builder` viewport dışındaki satırı hiç inşa etmiyor ve
+  `find.byKey` onu bulamıyor. İkinci device repair turu klavye odağını bırakarak
+  düzeltti. **Bu bir test tasarımı kırılganlığı**, ürün kusuru değil — üç satırın
+  kaydırmadan aynı anda ağaçta olmasını bekleyen test gerçek cihazda kırılgan.
 
 **Cihaz kapısı maliyeti (son artış)**
 

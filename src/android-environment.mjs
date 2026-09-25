@@ -418,25 +418,47 @@ export async function wipeAvdAfterTest({
   };
 }
 
-async function readyDevice(run, adb) {
+async function readyDevice(run, adb, preferredAvd = null) {
   const listed = await run(adb, ['devices', '-l']);
-  const device = parseAdbDevices(listed.stdout).find(item => item.state === 'device');
-  if (!device) return null;
-  const booted = await run(adb, ['-s', device.id, 'shell', 'getprop', 'sys.boot_completed']);
-  return isBootCompleted(booted.stdout) ? device.id : null;
+  const devices = parseAdbDevices(listed.stdout).filter(item => item.state === 'device');
+  for (const device of devices) {
+    const booted = await run(adb, ['-s', device.id, 'shell', 'getprop', 'sys.boot_completed']);
+    if (!isBootCompleted(booted.stdout)) continue;
+    if (!preferredAvd) return device.id;
+    // Under a pin the device must prove which AVD it is. An unprovable device is
+    // not accepted: wiping someone's personal emulator is not recoverable, and
+    // the run parks with a reason instead of guessing.
+    const named = await resolveAvdName({ run, adb, device: device.id });
+    if (named.name && named.name.toLowerCase() === preferredAvd.toLowerCase()) return device.id;
+  }
+  return null;
 }
 
 /**
- * Returns a device that has finished booting, launching the first available
- * emulator when nothing is connected. Waiting for `sys.boot_completed` matters:
+ * Picks the emulator to launch. Taking the first listed one was fine while a
+ * machine had exactly one AVD; with a dedicated Studio AVD alongside a personal
+ * one it would silently verify products on whichever happened to sort first —
+ * and wipe it. A configured name is honoured exactly, and a machine that does
+ * not have it launches nothing rather than the wrong device.
+ */
+export function selectEmulator(emulators, preferred = null) {
+  const wanted = String(preferred ?? '').trim();
+  if (!wanted) return emulators[0] ?? null;
+  return emulators.find(id => id.toLowerCase() === wanted.toLowerCase()) ?? null;
+}
+
+/**
+ * Returns a device that has finished booting, launching the configured (or first
+ * available) emulator when nothing is connected. Waiting for `sys.boot_completed` matters:
  * `adb devices` reports a still-booting emulator as ready and the integration
  * run then fails with "Unable to start the app on the device".
  */
 export async function ensureBootedDevice({
-  run, adb, flutter = null, timeoutMs = 240_000, pollMs = 3000, sleep = wait, now = Date.now,
+  run, adb, flutter = null, preferredAvd = null,
+  timeoutMs = 240_000, pollMs = 3000, sleep = wait, now = Date.now,
 }) {
   const log = [];
-  const immediate = await readyDevice(run, adb);
+  const immediate = await readyDevice(run, adb, preferredAvd);
   if (immediate) return { device: immediate, launched: false, log };
 
   let launched = false;
@@ -444,20 +466,30 @@ export async function ensureBootedDevice({
     const listed = await run(flutter, ['emulators']);
     const emulators = parseEmulatorList(listed.stdout);
     log.push(`Bulunan emülatörler: ${emulators.join(', ') || '(yok)'}`);
-    if (emulators.length) {
-      const result = await run(flutter, ['emulators', '--launch', emulators[0]]);
+    const chosen = selectEmulator(emulators, preferredAvd);
+    if (chosen) {
+      const result = await run(flutter, ['emulators', '--launch', chosen]);
       launched = true;
-      log.push(`Emülatör başlatıldı: ${emulators[0]} (exit ${result.status})`);
+      log.push(`Emülatör başlatıldı: ${chosen} (exit ${result.status})`);
+    } else if (preferredAvd && emulators.length) {
+      log.push(`Yapılandırılan AVD bulunamadı: ${preferredAvd}`);
     }
   }
   if (!launched) {
-    return { device: null, launched, log, reason: 'Bağlı cihaz yok ve başlatılabilecek emülatör bulunamadı.' };
+    return {
+      device: null,
+      launched,
+      log,
+      reason: preferredAvd
+        ? `Bağlı cihaz yok ve yapılandırılan AVD (${preferredAvd}) bulunamadı.`
+        : 'Bağlı cihaz yok ve başlatılabilecek emülatör bulunamadı.',
+    };
   }
 
   const deadline = now() + timeoutMs;
   while (now() < deadline) {
     await sleep(pollMs);
-    const device = await readyDevice(run, adb);
+    const device = await readyDevice(run, adb, preferredAvd);
     if (device) {
       log.push(`Cihaz hazır: ${device}`);
       return { device, launched, log };
@@ -468,6 +500,8 @@ export async function ensureBootedDevice({
     device: null,
     launched,
     log,
-    reason: `Emülatör ${Math.round(timeoutMs / 1000)} saniyede açılış tamamlamadı.`,
+    reason: preferredAvd
+      ? `${preferredAvd} ${Math.round(timeoutMs / 1000)} saniyede açılış tamamlamadı.`
+      : `Emülatör ${Math.round(timeoutMs / 1000)} saniyede açılış tamamlamadı.`,
   };
 }

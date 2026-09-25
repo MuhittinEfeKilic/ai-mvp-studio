@@ -150,3 +150,105 @@ test('templates keep toolchain results out of the acceptance checklist', () => {
     }
   }
 });
+
+test('acceptance criteria are parsed from headings as well as bullets', () => {
+  // Measured: a real spec wrote all ten criteria as `### AC1 — …` headings. The
+  // bullet-only parser returned zero, so ACCEPTANCE_CRITERIA.json was never
+  // written, expectedCriteria was empty and the reviewer id contract switched
+  // itself off — the reviewer then invented a `Q1` criterion and blocked on it.
+  const spec = [
+    '# Kabul Kriterleri',
+    '',
+    '### AC1 — CRUD ve kalıcılık',
+    'Kayıt oluşturulur ve yeniden açılışta korunur.',
+    '',
+    '### AC2 — Maliyet hesaplama',
+    'Yıllık tutar 12 ile bölünür.',
+    '',
+    '# Kalite Gereksinimleri',
+    '',
+    '- flutter analyze temiz olmalıdır.',
+  ].join('\n');
+  const criteria = parseAcceptanceCriteria(spec);
+  assert.deepEqual(criteria.map(item => item.id), ['AC1', 'AC2']);
+  assert.match(criteria[0].text, /CRUD ve kalıcılık/);
+  assert.match(criteria[0].text, /yeniden açılışta korunur/);
+  // The next section must not leak into the last criterion.
+  assert.doesNotMatch(criteria[1].text, /flutter analyze/);
+});
+
+test('heading criteria keep the ids the spec declared, not their position', () => {
+  // The reviewer reads the same document. Renumbering here would make it answer
+  // ids the contract has never heard of, and every answer would be rejected.
+  const spec = [
+    '# Kabul Kriterleri',
+    '',
+    '### AC3 — Üçüncü',
+    'Gözlemlenebilir davranış.',
+    '',
+    '### AC7 — Yedinci',
+    'Başka bir davranış.',
+  ].join('\n');
+  assert.deepEqual(parseAcceptanceCriteria(spec).map(item => item.id), ['AC3', 'AC7']);
+});
+
+test('bullet criteria keep their existing sequential ids', () => {
+  const spec = [
+    '# Kabul Kriterleri',
+    '',
+    '- Ana akış baştan sona tamamlanabilir.',
+    '- [ ] Kalıcı veri yeniden açılışta korunur.',
+  ].join('\n');
+  assert.deepEqual(parseAcceptanceCriteria(spec), [
+    { id: 'AC1', text: 'Ana akış baştan sona tamamlanabilir.' },
+    { id: 'AC2', text: 'Kalıcı veri yeniden açılışta korunur.' },
+  ]);
+});
+
+test('a full but unparseable acceptance section is blocked, not accepted', () => {
+  // The old check only asked whether the section had text in it, so a prose
+  // checklist passed validation and produced no contract at all.
+  const spec = template
+    .replace('project_name: "PROJE ADI"', 'project_name: "Test Ürünü"')
+    .replace('status: "draft"', 'status: "approved"')
+    .replace(
+      /# Kabul Kriterleri[\s\S]*?(?=\n# )/,
+      '# Kabul Kriterleri\n\nUygulama düzgün çalışmalı ve kullanıcıyı memnun etmelidir.\n\n',
+    )
+    .replace(/# Açık Kararlar[\s\S]*$/, '# Açık Kararlar\n\nYok.');
+  assert.equal(parseAcceptanceCriteria(spec).length, 0, 'test kendini doğrulayamıyor');
+  const report = validateSpec(spec);
+  assert.equal(report.ready, false);
+  assert.ok(
+    report.blocking_issues.some(issue => issue.section === 'Kabul Kriterleri'
+      && /ayrıştırılamadı/i.test(issue.message)),
+    JSON.stringify(report.blocking_issues),
+  );
+});
+
+test('a repeated criterion id is blocked before it can confuse the reviewer', () => {
+  const spec = template
+    .replace('project_name: "PROJE ADI"', 'project_name: "Test Ürünü"')
+    .replace('status: "draft"', 'status: "approved"')
+    .replace(
+      /# Kabul Kriterleri[\s\S]*?(?=\n# )/,
+      '# Kabul Kriterleri\n\n### AC1 — Bir\nDavranış.\n\n### AC1 — Yine bir\nBaşka davranış.\n\n',
+    )
+    .replace(/# Açık Kararlar[\s\S]*$/, '# Açık Kararlar\n\nYok.');
+  const report = validateSpec(spec);
+  assert.equal(report.ready, false);
+  assert.ok(
+    report.blocking_issues.some(issue => /AC1/.test(issue.message)),
+    JSON.stringify(report.blocking_issues),
+  );
+});
+
+test('both shipped templates produce a usable acceptance contract', () => {
+  // Whatever else changes in these files, the list the reviewer is limited to
+  // must keep parsing — an empty one silently removes that limit.
+  for (const source of [template, mobileTemplate]) {
+    const criteria = parseAcceptanceCriteria(source);
+    assert.ok(criteria.length > 0);
+    assert.equal(criteria.length, new Set(criteria.map(item => item.id)).size);
+  }
+});

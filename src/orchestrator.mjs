@@ -22,6 +22,7 @@ import {
 } from './app-completeness.mjs';
 import { runReleaseReadiness, writeReleaseReadinessReport } from './release-readiness.mjs';
 import { runSourceDiagnostics } from './source-diagnostics.mjs';
+import { runIntegrationTestDiagnostics } from './integration-test-diagnostics.mjs';
 import {
   evaluateMinSdkCompatibility, parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec,
 } from './spec-validator.mjs';
@@ -191,6 +192,41 @@ const PROJECT_GITIGNORE = [
   'android/.gradle/', 'android/local.properties',
 ];
 
+export const CONTRACT_FILES = Object.freeze({
+  flows: 'USER_FLOWS.json',
+  criteria: 'ACCEPTANCE_CRITERIA.json',
+});
+
+/**
+ * Writes the machine-readable contracts the spec implies, and reports which ones
+ * it had to create.
+ *
+ * Idempotent and run on every execution, not only at project creation: a spec
+ * whose criteria the parser could not read produced no ACCEPTANCE_CRITERIA.json,
+ * and a missing file does not fail anything loudly — it empties
+ * `expectedCriteria`, which switches off the reviewer's id contract entirely.
+ * One measured run lost a review repair round to a criterion the reviewer made
+ * up, because nothing was left to check it against. Healing the file here fixes
+ * projects created before the parser understood their spec.
+ *
+ * Existing files are never rewritten: the contract a project was built against
+ * is the one it keeps, even if the spec is edited later.
+ */
+export function ensureSpecContracts(workspace, specContent) {
+  const written = [];
+  const write = (name, payload) => {
+    const target = path.join(workspace, name);
+    if (fs.existsSync(target)) return;
+    fs.writeFileSync(target, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    written.push(name);
+  };
+  const flows = parseCriticalUserFlows(specContent);
+  if (flows.length) write(CONTRACT_FILES.flows, { version: 1, profile: 'flutter_mobile', flows });
+  const criteria = parseAcceptanceCriteria(specContent);
+  if (criteria.length) write(CONTRACT_FILES.criteria, { version: 1, criteria });
+  return written;
+}
+
 export function ensureProjectGitignore(workspace) {
   const filePath = path.join(workspace, '.gitignore');
   const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
@@ -312,7 +348,7 @@ export class Orchestrator {
   constructor({
     database, runner, projectsDir, maxConcurrentRuns = 2, flutterChecker = null,
     deviceTester = null, maxConcurrentAgents = 5, maxParallelBuilders = 4, tokenBudget = 0,
-    deviceMinFreeMb = 1536, deviceReclaimBelowMb = DEFAULT_RECLAIM_BELOW_MB,
+    deviceMinFreeMb = 1536, deviceReclaimBelowMb = DEFAULT_RECLAIM_BELOW_MB, deviceAvd = null,
     flutterTimeoutMs = 600_000, releaseBuilder = null,
   }) {
     this.database = database;
@@ -328,6 +364,7 @@ export class Orchestrator {
     this.tokenBudget = tokenBudget;
     this.deviceMinFreeMb = deviceMinFreeMb;
     this.deviceReclaimBelowMb = deviceReclaimBelowMb;
+    this.deviceAvd = deviceAvd;
     this.flutterTimeoutMs = flutterTimeoutMs;
     // Test seam for the release build, mirroring flutterChecker/deviceTester.
     this.releaseBuilder = releaseBuilder;
@@ -381,22 +418,9 @@ export class Orchestrator {
     git(workspace, ['config', 'user.name', 'AI MVP Studio']);
     git(workspace, ['config', 'user.email', 'studio@localhost']);
     fs.writeFileSync(path.join(workspace, 'PROJECT_SPEC.md'), specContent, 'utf8');
-    const criticalFlows = parseCriticalUserFlows(specContent);
-    if (criticalFlows.length) {
-      fs.writeFileSync(path.join(workspace, 'USER_FLOWS.json'), `${JSON.stringify({
-        version: 1, profile: 'flutter_mobile', flows: criticalFlows,
-      }, null, 2)}\n`, 'utf8');
-    }
-    const acceptanceCriteria = parseAcceptanceCriteria(specContent);
-    if (acceptanceCriteria.length) {
-      fs.writeFileSync(path.join(workspace, 'ACCEPTANCE_CRITERIA.json'), `${JSON.stringify({
-        version: 1, criteria: acceptanceCriteria,
-      }, null, 2)}\n`, 'utf8');
-    }
+    const contracts = ensureSpecContracts(workspace, specContent);
     ensureProjectGitignore(workspace);
-    git(workspace, ['add', 'PROJECT_SPEC.md', '.gitignore']);
-    if (criticalFlows.length) git(workspace, ['add', 'USER_FLOWS.json']);
-    if (acceptanceCriteria.length) git(workspace, ['add', 'ACCEPTANCE_CRITERIA.json']);
+    git(workspace, ['add', 'PROJECT_SPEC.md', '.gitignore', ...contracts]);
     git(workspace, ['commit', '-m', 'docs: add approved project specification']);
 
     const project = {
@@ -750,7 +774,7 @@ export class Orchestrator {
       if (!fs.existsSync(planPath)) {
         await this.#runAgent({
           projectId, taskKey: 'coordinator', agentName: 'Coordinator Agent', role: 'coordinator', workspace,
-          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md, UX_SPEC.md, DATA_MODEL.md and TEST_STRATEGY.md when present. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create ${Math.max(2, minTasks)} to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum. The dependency graph must reach width ${targetParallelism}, and at least ${targetParallelism} tasks must have an empty depends_on array so the first builder wave starts at full concurrency with disjoint paths. Do not make a shared foundation task a prerequisite of every feature; assign contracts and shared files to explicit owners, then let Integration reconcile cross-feature seams. Split by feature/module ownership, not by technical layer, and keep shared shell files with one owner. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, data-model, test-strategy, coordinator, integration, test, repair or reviewer. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow and acceptance criterion to a builder; require integration_test/<flow-name>_test.dart outputs that exercise real feature boundaries and persistence. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
+          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md, UX_SPEC.md, DATA_MODEL.md and TEST_STRATEGY.md when present. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create ${Math.max(2, minTasks)} to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum. The dependency graph must reach width ${targetParallelism}, and at least ${targetParallelism} tasks must have an empty depends_on array so the first builder wave starts at full concurrency with disjoint paths. Do not make a shared foundation task a prerequisite of every feature; assign contracts and shared files to explicit owners, then let Integration reconcile cross-feature seams. Split by feature/module ownership, not by technical layer, and keep shared shell files with one owner. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, data-model, test-strategy, coordinator, integration, test, repair or reviewer. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow and acceptance criterion to a builder; require integration_test/<flow-name>_test.dart outputs that exercise real feature boundaries and persistence. Device tests must not assume a widget is laid out: after entering text, dismiss focus or scroll the target into view before asserting it is present, because the on-screen keyboard shrinks the viewport and a lazily built list never creates the row that no longer fits. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
         });
         this.#commitArtifact(workspace, 'TASK_PLAN.json', 'docs: add coordinated task plan');
       }
@@ -811,7 +835,7 @@ export class Orchestrator {
       await this.#runAgent({
         projectId, taskKey: task.id, agentName: `Flutter Builder: ${task.name}`,
         role: 'flutter_builder', workspace: taskWorkspace,
-        prompt: `Read PROJECT_SPEC.md, ARCHITECTURE.md, UX_SPEC.md and TASK_PLAN.json. Complete only task "${task.name}". ${task.prompt}\nYou may modify only these paths: ${task.allowed_paths.join(', ')}. Required outputs: ${task.required_outputs.join(', ') || 'as specified'}. Do not edit planning documents or other task areas. For an offline product, android/app/src/main/AndroidManifest.xml must omit INTERNET, while debug and profile manifests must retain android.permission.INTERNET for Flutter tooling and VM Service discovery. Do not run flutter, dart, pub or Gradle commands; the orchestrator runs toolchain checks after integration. Perform only file-level or static task acceptance checks: ${task.acceptance_checks.join(', ') || 'relevant focused checks'}.`,
+        prompt: `Read PROJECT_SPEC.md, ARCHITECTURE.md, UX_SPEC.md and TASK_PLAN.json. Complete only task "${task.name}". ${task.prompt}\nYou may modify only these paths: ${task.allowed_paths.join(', ')}. Required outputs: ${task.required_outputs.join(', ') || 'as specified'}. Do not edit planning documents or other task areas. For an offline product, android/app/src/main/AndroidManifest.xml must omit INTERNET, while debug and profile manifests must retain android.permission.INTERNET for Flutter tooling and VM Service discovery. Do not run flutter, dart, pub or Gradle commands; the orchestrator runs toolchain checks after integration. Perform only file-level or static task acceptance checks: ${task.acceptance_checks.join(', ') || 'relevant focused checks'}. In integration_test files, never assert that a widget is present while the keyboard may still be up: after tester.enterText, either dismiss focus (FocusManager.instance.primaryFocus?.unfocus()) or bring the target into view (tester.ensureVisible / scrollUntilVisible) before the expectation. On a real device the IME shrinks the viewport and a lazily built list never builds the row that no longer fits, so the assertion fails on correct code.`,
       });
       const changed = getGitChangedPaths(taskWorkspace);
       const report = validateChangedPaths(changed, task.allowed_paths);
@@ -1185,7 +1209,18 @@ export class Orchestrator {
         adbExecutable: await resolveAdb(),
         minimumFreeMb: this.deviceMinFreeMb,
         reclaimBelowMb: this.deviceReclaimBelowMb,
+        preferredAvd: this.deviceAvd,
       });
+    // Deterministic, source-only and never a gate: it explains a measured class
+    // of device failure instead of judging the product. Attached to the report
+    // because that is what a device repair agent reads — the first repair round
+    // of a real run was spent guessing at a cause this scan names outright.
+    report.test_diagnostics = runIntegrationTestDiagnostics(workspace);
+    if (report.checks.integration_test?.status === 'FAIL' && report.test_diagnostics.findings.length) {
+      report.notes = [...(report.notes || []), ...report.test_diagnostics.findings.map(
+        finding => `Cihazda kırılgan test iddiası — ${finding.file}: ${finding.details}`,
+      )];
+    }
     // A gate that could not restore the snapshot leaves the device dirty; the
     // end-of-run wipe then runs whatever the free space says.
     if (report.needs_full_wipe) this.pendingDeviceWipe.add(projectId);
@@ -1292,7 +1327,7 @@ export class Orchestrator {
       this.database.updateProject(projectId, { status: 'device_repair' });
       await this.#runAgent({
         projectId, taskKey: repairTaskId, agentName: 'Device Repair Agent', role: 'device_repair', workspace,
-        prompt: `Device repair turu ${round + 1}/${MAX_DEVICE_REPAIR_ROUNDS}. The application failed on a real Android device even though analyze, test and build passed. Failure: ${describeDeviceFailure(deviceReport)}. Read DEVICE_REPORT.json, USER_FLOWS.json and the referenced QUALITY_LOGS/DEVICE_*.log files. Fix only the cause of this device failure across the UI, repository and persistence boundaries of the affected critical flow. Errors must stay diagnosable: keep the caught error, surface a specific message and log or rethrow it. Do not run flutter, dart, pub, adb or Gradle commands; the orchestrator rebuilds and reruns the device gate. Do not change planning documents or expand scope.`,
+        prompt: `Device repair turu ${round + 1}/${MAX_DEVICE_REPAIR_ROUNDS}. The application failed on a real Android device even though analyze, test and build passed. Failure: ${describeDeviceFailure(deviceReport)}. Read DEVICE_REPORT.json, USER_FLOWS.json and the referenced QUALITY_LOGS/DEVICE_*.log files. DEVICE_REPORT.json may carry a test_diagnostics section naming assertions that are fragile on a real device; check it before assuming the product is wrong. Fix only the cause of this device failure across the UI, repository and persistence boundaries of the affected critical flow. Errors must stay diagnosable: keep the caught error, surface a specific message and log or rethrow it. Do not run flutter, dart, pub, adb or Gradle commands; the orchestrator rebuilds and reruns the device gate. Do not change planning documents or expand scope.`,
       });
       git(workspace, ['add', '-A']);
       if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'fix: repair device test failure']);
@@ -1395,6 +1430,25 @@ export class Orchestrator {
       return;
     }
     this.#completeTask(projectId, taskId(projectId, 'reviewer'), workspace, review.message);
+  }
+
+  /**
+   * Restores a contract file the project was created without. Path-scoped like
+   * every other orchestrator-owned commit, and never fatal: a project that
+   * cannot be healed keeps running exactly as it did before.
+   */
+  #ensureSpecContracts(projectId, workspace) {
+    try {
+      const project = this.database.getProject(projectId);
+      const written = ensureSpecContracts(workspace, project?.prompt ?? '');
+      if (!written.length) return;
+      commitPaths(workspace, written, 'docs: restore machine-readable spec contracts');
+      this.database.addEvent(projectId, 'spec_contracts.restored', { files: written });
+    } catch (error) {
+      this.database.addEvent(projectId, 'spec_contracts.restored', {
+        files: [], error: error.message,
+      });
+    }
   }
 
   /** Criterion ids the review must answer, threaded into the verdict contract. */
@@ -1504,6 +1558,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
     this.database.updateProject(id, { status: 'planning', error: null });
     try {
       ensureProjectGitignore(workspace);
+      this.#ensureSpecContracts(id, workspace);
       let warmBuild = null;
       if (!this.flutterChecker) {
         await this.#runFlutterPreflight(id, workspace);
@@ -1533,7 +1588,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         {
           key: 'test-strategy', role: 'test_strategy', name: 'Test Strategy Agent', artifact: 'TEST_STRATEGY.md',
           commit: 'docs: add test strategy',
-          prompt: 'Read PROJECT_SPEC.md, USER_FLOWS.json and ACCEPTANCE_CRITERIA.json. Produce only TEST_STRATEGY.md. Build acceptance-criterion-to-module traceability; specify unit, widget and integration tests, fixtures, real-persistence boundaries, screen-state coverage and deterministic evidence. Every critical flow must map to one integration_test file. Do not implement the application.',
+          prompt: 'Read PROJECT_SPEC.md, USER_FLOWS.json and ACCEPTANCE_CRITERIA.json. Produce only TEST_STRATEGY.md. Build acceptance-criterion-to-module traceability; specify unit, widget and integration tests, fixtures, real-persistence boundaries, screen-state coverage and deterministic evidence. Every critical flow must map to one integration_test file. Specify how each device assertion stays independent of keyboard state: after text entry, focus is dismissed or the target is scrolled into view before it is asserted present. Do not implement the application.',
         },
       ].filter(agent => this.database.getTask(taskId(id, agent.key)));
 

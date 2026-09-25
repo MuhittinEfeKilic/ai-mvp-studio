@@ -341,7 +341,7 @@ export function restoreApkBackup(apkPath, backupPath) {
 
 export async function runAndroidDeviceGate({
   workspace, apkPath, packageName, flows, flutterExecutable, adbExecutable,
-  run = defaultRun, acquireDevice = ensureBootedDevice,
+  run = defaultRun, acquireDevice = ensureBootedDevice, preferredAvd = null,
   prepareDevice = prepareDeviceForTest, minimumFreeMb = 1536,
   reclaimBelowMb = DEFAULT_RECLAIM_BELOW_MB, resetSnapshot = resetAvdToSnapshot,
   saveSnapshot = saveAvdSnapshot, knownSnapshot = hasAvdSnapshot,
@@ -378,6 +378,7 @@ export async function runAndroidDeviceGate({
     run: runDeviceCommand,
     adb: adbExecutable,
     flutter: flutterExecutable,
+    preferredAvd,
   }));
   report.logs.adb_devices = (acquired.log || []).join('\n');
   if (!acquired.device) {

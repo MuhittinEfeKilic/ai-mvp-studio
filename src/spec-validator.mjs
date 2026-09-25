@@ -90,6 +90,27 @@ export function parseCriticalUserFlows(markdown) {
 export function parseAcceptanceCriteria(markdown) {
   const { sections } = parseSpec(markdown);
   const content = sections.get(normalize('Kabul Kriterleri')) || '';
+
+  // Heading form: `### AC1 — Başlık` followed by the observable behaviour.
+  // Measured: a real spec wrote all ten criteria this way, the bullet-only parser
+  // returned zero, ACCEPTANCE_CRITERIA.json was never written and the whole
+  // reviewer id contract silently switched itself off — the reviewer then
+  // invented a criterion and blocked the project with it.
+  //
+  // The id comes from the spec, not from position. A spec that skips or reorders
+  // ids keeps them, because the reviewer reads the same document: renumbering
+  // here would make its answers unknown to the contract that checks them.
+  const headings = [...content.matchAll(/^#{3,6}[ \t]+(AC\d+)\b[ \t]*[—–:.-]?[ \t]*(.*)$/gm)];
+  if (headings.length) {
+    return headings.map((heading, index) => {
+      const start = heading.index + heading[0].length;
+      const end = headings[index + 1]?.index ?? content.length;
+      const body = content.slice(start, end).trim();
+      const title = heading[2].trim();
+      return { id: heading[1].toUpperCase(), text: [title, body].filter(Boolean).join(' — ') };
+    });
+  }
+
   return content.split(/\r?\n/)
     .map(line => line.trim())
     .filter(line => /^[-*]\s+\S/.test(line))
@@ -230,6 +251,26 @@ export function validateSpec(markdown) {
         message: 'Her kritik akış en az üç numaralı adım ve `- Beklenen sonuç:` satırı içermelidir.',
       });
     }
+  }
+
+  // The reviewer may block on these and nothing else, so a checklist that cannot
+  // be parsed is not a cosmetic problem: it disables that limit entirely.
+  const acceptanceCriteria = parseAcceptanceCriteria(text);
+  const duplicateCriteria = [...acceptanceCriteria
+    .reduce((counts, item) => counts.set(item.id, (counts.get(item.id) || 0) + 1), new Map())]
+    .filter(([, count]) => count > 1).map(([id]) => id);
+  checks.push({ name: 'Ayrıştırılabilir kabul kriterleri', passed: acceptanceCriteria.length > 0 && !duplicateCriteria.length });
+  if (!acceptanceCriteria.length) {
+    blocking_issues.push({
+      section: 'Kabul Kriterleri',
+      message: 'Kabul kriterleri ayrıştırılamadı. Her kriteri `- ...` maddesi veya '
+        + '`### AC1 — Başlık` bölümü olarak yazın; bölümün dolu olması yeterli değildir.',
+    });
+  } else if (duplicateCriteria.length) {
+    blocking_issues.push({
+      section: 'Kabul Kriterleri',
+      message: `Kabul kriteri kimliği birden fazla kez tanımlanmış: ${duplicateCriteria.join(', ')}.`,
+    });
   }
 
   const openDecisions = sections.get(normalize('Açık Kararlar')) ?? '';

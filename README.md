@@ -99,9 +99,16 @@ kaydedilir. İki bölüm makinece okunabilir sözleşmeye dönüşür:
 
 - `Kritik Kullanıcı Akışları` → `USER_FLOWS.json`. Planlama, uygulama, integration
   test ve inceleme agent'ları aynı sözleşmeyi kullanır.
-- `Kabul Kriterleri` → `ACCEPTANCE_CRITERIA.json` (`AC1..ACn`). İncelemenin
-  bloklayabileceği **tek** liste budur; maddeler gözlemlenebilir ürün davranışı
-  anlatmalıdır. Toolchain sonuçları `Kalite Gereksinimleri` bölümüne aittir.
+- `Kabul Kriterleri` → `ACCEPTANCE_CRITERIA.json`. İncelemenin bloklayabileceği
+  **tek** liste budur; maddeler gözlemlenebilir ürün davranışı anlatmalıdır.
+  Toolchain sonuçları `Kalite Gereksinimleri` bölümüne aittir. İki biçim de
+  tanınır: `- ...` maddeleri (sırayla `AC1..ACn`) veya `### AC1 — Başlık`
+  bölümleri — bu ikincisinde **kimlik spec'in kendisinden** okunur, konumdan
+  değil, çünkü reviewer aynı belgeyi okur ve yeniden numaralandırmak onun
+  yanıtlarını sözleşmeye yabancı hâle getirir. Bölüm dolu ama ayrıştırılamıyorsa
+  spec doğrulaması **engel** bildirir: ayrıştırılamayan bir liste, reviewer'ın
+  bloklama sınırını sessizce tamamen kaldırır. Sözleşme dosyaları her koşu
+  başında idempotent olarak onarılır; **mevcut dosya asla yeniden yazılmaz.**
 
 Mobil template v2; özellik modülleri, iş kuralları, ekran durum matrisi, veri
 sözleşmeleri, tasarım DNA/tokenları ve test izlenebilirliğini de zorunlu kılar.
@@ -285,6 +292,56 @@ kararı verildikten *sonra* çalışır. Sonuçları `DEVICE_REPORT.json` içind
 **geçmiş bir ürün doğrulamasını geçersiz kılamaz.** AVD olmayan hedeflerde sıfırlama
 `SKIPPED`'tır; yapacak bir şey olmaması arıza değildir. Fiziksel cihazlar hiçbir zaman
 otomatik sıfırlanmaz.
+
+### Cihaz testi kırılganlık taraması
+
+Cihaz kapısı, üretilen `integration_test/` kaynağını deterministik olarak tarar ve
+sonucu `DEVICE_REPORT.json` içindeki `test_diagnostics` alanına yazar. **Kapı
+değildir**: ürünü yargılamaz, hiçbir durumu değiştirmez, toolchain komutu, cihaz ve
+agent turu maliyeti yoktur.
+
+Tek bir ölçülmüş arıza sınıfını arar: *metin girildikten sonra odak bırakılmadan ve
+kaydırma yapılmadan bir widget'ın varlığını iddia etmek.* Gerçek cihazda odaklanan
+alan IME'yi açar, `MediaQuery.viewInsets.bottom` büyür, liste viewport'u daralır ve
+tembel inşa edilen `SliverList`/`ListView.builder` sığmayan satırı hiç oluşturmaz;
+`find.byKey` yalnız var olan widget'ı gördüğü için **ürün doğru olduğu hâlde** iddia
+düşer.
+
+Bu, aynı projenin iki gerçek koşusunda üç kez oldu (`active_filter`,
+`edit_subscription`, `search_subscription`) ve toplam dört device repair turuna mal
+oldu; sonunda işe yarayan düzeltme tek satırdı. Tarama bulguyu adıyla söylediği için
+onarım agent'ı artık doğru hipotezden başlar — bulgular kapı FAIL verdiğinde
+`notes` alanına da yazılır.
+
+**Yanlış pozitife karşı kurallar.** Yalnız **varlık** iddiaları (`findsOneWidget`,
+`findsWidgets`, `findsNWidgets`) bildirilir; `findsNothing` bu şekilde düşemez
+(inşa edilmemiş widget zaten bulunmaz), onu işaretlemek gürültü olurdu. Odağı
+bırakan (`unfocus`, `primaryFocus`, `FocusScope`) veya hedefi görünür yapan
+(`ensureVisible`, `scrollUntilVisible`, `dragUntilVisible`) her çağrı riski
+kaldırır. Yorum satırları taranmaz. Bir test **bir kez** bildirilir: altı satır
+iddia eden bir testin bir sorunu vardır, altı değil.
+
+Gerçek korpusta ölçüldü: 9 üretilmiş test dosyası, **2 bulgu** — biri tam olarak
+iki onarım turuna mal olan `search_subscription_test.dart`. `edit_subscription`
+işaretlenmedi, çünkü önceki onarımda eklenen `tester.ensureVisible` riski zaten
+kaldırıyor.
+
+### Hangi cihaz kullanılır
+
+`MVP_STUDIO_AVD` ayarlanmışsa cihaz kapısı **yalnız o AVD'yi** kullanır: adı
+doğrulanamayan bağlı bir cihazı benimsemez, gerekirse yapılandırılan AVD'yi
+kendisi başlatır, bulunamazsa koşuyu gerekçesiyle bekletir.
+
+Ayar boşken eski davranış sürer — listedeki ilk emülatör. Tek AVD'li bir
+makinede bu zararsızdı; **iki AVD varsa değil.** Ölçüldü: pin olmadan
+`flutter emulators` listesinin ilki `Medium_Phone_API_36.0` (kişisel AVD)
+seçiliyordu, ve cihaz kapısı o AVD'yi sıfırlamaya ve wipe etmeye yetkilidir.
+Pin yalnız başlatmayı değil **kullanımı** da sınırlar; aksi hâlde zaten açık olan
+kişisel bir emülatör adb'nin ilk bildirdiği cihaz olduğu için sessizce
+kullanılırdı.
+
+Ayarlar `.env` dosyasından okunur (`npm start` artık
+`--env-file-if-exists=.env` ile çalışır); dosya yoksa ortam değişkenleri geçerlidir.
 
 ### Cihaz sıfırlama politikası
 
@@ -552,11 +609,12 @@ npm test
 ```
 
 `npm run check` 17 birinci taraf `src/*.mjs` modülünün sözdizimini denetler. `npm test`
-**170 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
+**190 testtir** ve veritabanı, spec doğrulama, plan paralellik kuralları, scheduler,
 worktree/path izolasyonu, checkpoint, kalite ve inceleme sözleşmeleri, kaynak teşhis
 taraması, cihaz kapısı, cihaz hedefi sınıflandırması, emülatör otomasyonu, süreç timeout
 semantiği, event loop canlılığı, path-scoped commit davranışı, analiz şiddet
 politikası, spec/toolchain Android API uyumu, cihaz sıfırlama politikası,
+cihaz testi kırılganlık taraması,
 release hazırlık değerlendirmesi, uygulama bütünlüğü taraması ve orchestrator
 davranışlarını kapsar.
 
@@ -653,6 +711,7 @@ modüllerini kullanır. Runtime verileri `data/` ve `projects/` altında tutulur
 | `src/task-scheduler.mjs`, `src/task-worktree.mjs` | Hazır görev seçimi ve path izolasyonu |
 | `src/quality-report.mjs` | Kalite raporu ve inceleme sözleşmesi doğrulaması |
 | `src/source-diagnostics.mjs` | Üretilen Dart kaynağında sessiz hata yutma taraması |
+| `src/integration-test-diagnostics.mjs` | Üretilen cihaz testlerinde klavyeye bağımlı kırılgan iddia taraması |
 | `src/device-tester.mjs` | Cihaz kapısı, arıza sınıflandırması, hata imzası |
 | `src/release-readiness.mjs` | Deterministik release hazırlık değerlendirmesi ve rapor |
 | `src/app-completeness.mjs` | Üretilen uygulamada tamamlanmamışlık izlerinin deterministik taraması |

@@ -69,7 +69,7 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **170/170 test**. Cihaz temizliği ayrımı, cihaz hedefi
+- Studio regresyonu: **190/190 test**. Cihaz temizliği ayrımı, cihaz hedefi
   sınıflandırması, AVD adı fallback'i, reviewer sözleşme düzeltmesi, Codex stdin
   arızası, bayat APK yedeği kurtarması, deterministik process timeout'u, event loop
   canlılığı, path-scoped commit davranışı, analiz şiddet politikası,
@@ -86,6 +86,15 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
   Taban SDK kaynağından okunur; okunamazsa kontrol `SKIPPED`'tır.
 - **`DEVICE_REPORT.json` artık agent artefaktı gibi commit edilmiyor.** Ana
   workspace'te toolchain'in yazdığı dosya, agent sınır ihlali sayılamaz.
+- **Cihaz seçimi sabitlenebilir.** `MVP_STUDIO_AVD` ayarlıysa kapı yalnız o AVD'yi
+  kullanır: adı doğrulanamayan bağlı cihazı benimsemez, gerekirse kendisi başlatır.
+  Ayar boşken eski "listedeki ilk emülatör" davranışı sürer. Ayarlar `.env`
+  dosyasından okunur.
+- **Cihaz testi kırılganlık taraması** (`src/integration-test-diagnostics.mjs`):
+  metin girildikten sonra odak bırakılmadan/kaydırmadan yapılan varlık iddialarını
+  bildirir. Kapı değildir; `DEVICE_REPORT.json` → `test_diagnostics` alanına yazılır
+  ve kapı FAIL verdiğinde `notes` içine de geçer. Planlama, builder ve device repair
+  prompt'ları aynı kuralı taşır.
 - **Hiçbir toolchain komutu event loop'u bloke etmez.** Flutter, Gradle, adb ve
   aapt çağrılarının tamamı `async-process-runner` üzerinden çalışır; orchestrator
   içinde senkron kalan tek şey yerel Git plumbing'idir.
@@ -115,7 +124,11 @@ Değiştirmeden önce ilgili testi okuyun.
 - `PROJECT_SPEC.md` — değişmeden saklanır, tek gerçek kaynak.
 - `USER_FLOWS.json` — `Kritik Kullanıcı Akışları` bölümünden; her akış başlık, en az
   üç numaralı adım ve `- Beklenen sonuç:` satırı içermek zorundadır.
-- `ACCEPTANCE_CRITERIA.json` — `Kabul Kriterleri` maddeleri `AC1..ACn` olarak.
+- `ACCEPTANCE_CRITERIA.json` — `Kabul Kriterleri`. İki biçim tanınır: `- ...`
+  maddeleri (sırayla `AC1..ACn`) ve `### AC1 — Başlık` bölümleri (kimlik spec'ten
+  okunur). Bölüm dolu ama ayrıştırılamıyorsa **engel**; kimlik tekrarı da engeldir.
+  Sözleşme dosyaları her koşu başında `ensureSpecContracts` ile idempotent olarak
+  onarılır, böylece eski projeler de kazanır; **mevcut dosya asla yeniden yazılmaz.**
 
 Mobil profilde `device_test: "required"` zorunludur.
 

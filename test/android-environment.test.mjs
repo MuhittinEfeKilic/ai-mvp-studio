@@ -8,7 +8,7 @@ import {
   compareBuildToolsVersions, describeDeviceTarget, detectDeviceTarget, ensureBootedDevice,
   isBootCompleted, isPrereleaseBuildTools,
   parseAvailableDataKb, parseEmulatorList, prepareDeviceForTest, probeBuildTools,
-  readFlutterMinSdkVersion, resolveAvdName, wipeAvdAfterTest,
+  readFlutterMinSdkVersion, selectEmulator, resolveAvdName, wipeAvdAfterTest,
 } from '../src/android-environment.mjs';
 
 test('the Flutter Android floor is read from the SDK, and unknown stays unknown', () => {
@@ -355,4 +355,119 @@ test('AVD wipe is skipped for every target that is not an Android Studio AVD', a
   });
   assert.equal(preclassified.status, 'SKIPPED');
   assert.equal(preclassified.target_type, 'physical_device');
+});
+
+test('the device gate launches the configured AVD, never whichever sorts first', () => {
+  const available = ['Medium_Phone_API_36.0', 'studio_test_api36'];
+  // With one AVD on the machine "take the first" was harmless. With a dedicated
+  // Studio AVD next to a personal one it decides which device gets verified
+  // against — and which one the reclaim step is allowed to wipe.
+  assert.equal(selectEmulator(available, 'studio_test_api36'), 'studio_test_api36');
+  // Case is forgiven, but the id handed to flutter is the one it listed.
+  assert.equal(selectEmulator(available, 'STUDIO_TEST_API36'), 'studio_test_api36');
+  // Unconfigured keeps the old behaviour exactly.
+  assert.equal(selectEmulator(available), 'Medium_Phone_API_36.0');
+  assert.equal(selectEmulator(available, '   '), 'Medium_Phone_API_36.0');
+  // A configured AVD that is not installed launches nothing rather than the
+  // wrong device: wiping someone's personal emulator is not a recoverable
+  // mistake.
+  assert.equal(selectEmulator(available, 'studio_test_api35'), null);
+  assert.equal(selectEmulator([], 'studio_test_api36'), null);
+  assert.equal(selectEmulator([]), null);
+});
+
+test('a missing configured AVD is reported as such instead of silently falling back', async () => {
+  const launches = [];
+  const result = await ensureBootedDevice({
+    adb: 'adb',
+    flutter: 'flutter',
+    preferredAvd: 'studio_test_api36',
+    run: async (command, args) => {
+      if (args.includes('--launch')) launches.push(args.at(-1));
+      if (command === 'flutter' && args[0] === 'emulators') {
+        return { status: 0, stdout: 'Medium_Phone_API_36.0 • Medium Phone • Google • android\n' };
+      }
+      return { status: 0, stdout: 'List of devices attached\n' };
+    },
+  });
+  assert.equal(result.device, null);
+  assert.deepEqual(launches, [], 'yanlış AVD başlatıldı');
+  assert.match(result.reason, /studio_test_api36/);
+  assert.match(result.log.join('\n'), /Yapılandırılan AVD bulunamadı/);
+});
+
+test('a pinned run refuses a connected emulator that is not the configured AVD', async () => {
+  // The dedicated AVD exists so the Studio never verifies a product against —
+  // or wipes — someone's personal emulator. Pinning only the launch would leave
+  // that hole wide open, because a personal AVD that is already running is
+  // simply the first device adb reports.
+  const launches = [];
+  const result = await ensureBootedDevice({
+    adb: 'adb',
+    flutter: 'flutter',
+    preferredAvd: 'studio_test_api36',
+    timeoutMs: 0,
+    run: async (command, args) => {
+      if (args.includes('--launch')) launches.push(args.at(-1));
+      if (command === 'flutter' && args[0] === 'emulators') {
+        return {
+          status: 0,
+          stdout: [
+            'Medium_Phone_API_36.0 • Medium Phone • Generic • android',
+            'studio_test_api36 • Studio Test API 36 • Generic • android',
+          ].join('\n'),
+        };
+      }
+      if (args[0] === 'devices') {
+        return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      }
+      if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      // The running emulator is the personal one.
+      if (args.includes('avd') && args.includes('name')) {
+        return { status: 0, stdout: 'Medium_Phone_API_36.0\nOK\n' };
+      }
+      return { status: 0, stdout: '' };
+    },
+  });
+  // It was not adopted, and the configured AVD was launched instead.
+  assert.equal(result.device, null, 'kişisel AVD benimsendi');
+  assert.deepEqual(launches, ['studio_test_api36']);
+});
+
+test('a pinned run adopts the configured AVD when it is already running', async () => {
+  const launches = [];
+  const result = await ensureBootedDevice({
+    adb: 'adb',
+    flutter: 'flutter',
+    preferredAvd: 'studio_test_api36',
+    run: async (command, args) => {
+      if (args.includes('--launch')) launches.push(args.at(-1));
+      if (args[0] === 'devices') {
+        return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      }
+      if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      if (args.includes('avd') && args.includes('name')) {
+        return { status: 0, stdout: 'studio_test_api36\nOK\n' };
+      }
+      return { status: 0, stdout: '' };
+    },
+  });
+  assert.equal(result.device, 'emulator-5554');
+  assert.equal(result.launched, false);
+  assert.deepEqual(launches, [], 'zaten çalışan AVD için ikinci bir emülatör başlatıldı');
+});
+
+test('without a pin the first booted device is used, exactly as before', async () => {
+  const result = await ensureBootedDevice({
+    adb: 'adb',
+    run: async (command, args) => {
+      if (args[0] === 'devices') {
+        return { status: 0, stdout: 'List of devices attached\nemulator-5554 device\n' };
+      }
+      if (args.includes('sys.boot_completed')) return { status: 0, stdout: '1\n' };
+      return { status: 0, stdout: '' };
+    },
+  });
+  assert.equal(result.device, 'emulator-5554');
+  assert.equal(result.launched, false);
 });
