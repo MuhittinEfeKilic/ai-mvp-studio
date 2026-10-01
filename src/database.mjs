@@ -108,6 +108,12 @@ export class Database {
     this.#ensureColumn('projects', 'completeness_report', 'TEXT');
     this.#ensureColumn('agent_runs', 'context_chars', 'INTEGER NOT NULL DEFAULT 0');
     this.#ensureColumn('agent_runs', 'context_manifest', 'TEXT');
+    // What the Studio ASKED Codex for, not what Codex used: the exec JSON stream
+    // carries no model information (measured — it emits only thread/turn/item
+    // events), so an unassigned role leaves these null, meaning "Codex's own
+    // configuration decided". Nothing is inferred.
+    this.#ensureColumn('agent_runs', 'model', 'TEXT');
+    this.#ensureColumn('agent_runs', 'reasoning_effort', 'TEXT');
   }
 
   #ensureColumn(table, column, definition) {
@@ -182,7 +188,7 @@ export class Database {
       'status', 'final_message', 'error', 'started_at', 'completed_at', 'thread_id',
       'checkpoint_commit', 'pause_reason', 'input_tokens', 'cached_input_tokens',
       'output_tokens', 'retry_count',
-      'context_chars', 'context_manifest',
+      'context_chars', 'context_manifest', 'model', 'reasoning_effort',
     ];
     const entries = Object.entries(fields).filter(([key]) => allowed.includes(key));
     if (!entries.length) return;

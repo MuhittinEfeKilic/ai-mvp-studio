@@ -7,8 +7,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  builderTaskPolicy, commitPaths, ensureFlutterToolingManifests, ensureProjectGitignore, ensureSpecContracts,
-  qualityFailureSignature, runFlutterAsync,
+  ARTIFACT_DIR, builderTaskPolicy, commitPaths, ensureFlutterToolingManifests, ensureProjectGitignore,
+  ensureSpecContracts, preserveArtifact, qualityFailureSignature, runFlutterAsync,
 } from '../src/orchestrator.mjs';
 
 function gitRepository(prefix) {
@@ -206,6 +206,51 @@ test('a targeted commit records a new file and a deletion without a whole-tree s
   assert.equal(commitPaths(workspace, ['TEST_REPORT.json'], 'chore: discard report'), true);
   assert.equal(run('ls-files', 'TEST_REPORT.json'), '');
   assert.match(run('status', '--porcelain'), /noise\.txt/);
+});
+
+test('the delivered APK is recorded outside the directory the toolchain owns', () => {
+  // A cleanup that deleted build/ had to rescue nine APKs by hand, because the
+  // database pointed inside it. The recorded path must survive `flutter clean`.
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-artifact-'));
+  const workspace = path.join(projectRoot, 'repository');
+  const built = path.join(workspace, 'build', 'app', 'outputs', 'flutter-apk');
+  fs.mkdirSync(built, { recursive: true });
+  fs.writeFileSync(path.join(built, 'app-debug.apk'), 'apk-bytes');
+
+  const recorded = preserveArtifact(workspace, 'build/app/outputs/flutter-apk/app-debug.apk');
+  assert.equal(recorded, path.join(projectRoot, ARTIFACT_DIR, 'app-debug.apk'));
+  assert.equal(fs.readFileSync(recorded, 'utf8'), 'apk-bytes');
+
+  fs.rmSync(path.join(workspace, 'build'), { recursive: true, force: true });
+  assert.ok(fs.existsSync(recorded), 'kayıt build/ ile birlikte kaybolmamalı');
+  // The copy lives beside the repository, never inside it, so it can never be
+  // mistaken for an agent's uncommitted change.
+  assert.ok(!recorded.startsWith(workspace + path.sep));
+});
+
+test('a missing build output never costs a finished run its artifact path', () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-artifact-missing-'));
+  const workspace = path.join(projectRoot, 'repository');
+  fs.mkdirSync(workspace, { recursive: true });
+  const relative = 'build/app/outputs/flutter-apk/app-debug.apk';
+
+  // Nothing to copy: the run is already finished and must not fail over a copy.
+  assert.equal(preserveArtifact(workspace, relative), path.join(workspace, relative));
+  assert.equal(fs.existsSync(path.join(projectRoot, ARTIFACT_DIR)), false);
+});
+
+test('every code-writing role is told not to invent Flutter APIs', () => {
+  const source = fs.readFileSync(new URL('../src/orchestrator.mjs', import.meta.url), 'utf8');
+  // `Seri Takip` lost three repair rounds and the whole project to
+  // `SemanticsFlags.hasFlag` and `SemanticsNode.actions`, which do not exist.
+  // The rule belongs on the shared suffix, so repair carries it as well as the
+  // builder that wrote the symbol — repair was guessing at the same surface.
+  const suffix = source.match(/if \(\['flutter_builder'[\s\S]*?\n {4}\}/);
+  assert.ok(suffix, 'ortak prompt eki bulunamadı');
+  assert.match(suffix[0], /APIs that exist in the installed SDK/);
+  for (const role of ['flutter_builder', 'integration', 'device_repair', 'repair', 'review_repair']) {
+    assert.match(suffix[0], new RegExp(`'${role}'`), role);
+  }
 });
 
 test('the quality gate reports analyzer infos instead of failing on them', () => {

@@ -4,6 +4,8 @@ Bu dosya repository üzerinde çalışan tüm AI agent'ları için bağlayıcı 
 bağlamıdır. İşe başlamadan önce:
 
 - `docs/PROJECT_STATUS.md` içindeki mevcut hedefi ve görevle ilgili bilinen sorunları okuyun.
+- `docs/LESSONS.md` denenip başarısız olmuş yaklaşımları tutar; bir kapıyı, model
+  seçimini veya sözleşmeyi değiştirecek bir görevde **önce** oraya bakın.
 - `README.md` yalnız görev ürün davranışı, kullanım veya mimari bağlam gerektiriyorsa okunmalıdır.
 - Küçük ve lokal görevlerde bu dosyaları tamamen okumayın; yalnız ilgili bölümleri inceleyin.
 

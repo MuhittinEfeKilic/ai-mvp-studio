@@ -23,6 +23,10 @@ import {
 import { runReleaseReadiness, writeReleaseReadinessReport } from './release-readiness.mjs';
 import { runSourceDiagnostics } from './source-diagnostics.mjs';
 import { runIntegrationTestDiagnostics } from './integration-test-diagnostics.mjs';
+import { DESIGN_TOKENS_PATH, designTokensExist, readDesignTokens } from './design-tokens.mjs';
+import {
+  DESIGN_REPORT_PATH, runDesignDiagnostics, writeDesignReport,
+} from './design-diagnostics.mjs';
 import {
   evaluateMinSdkCompatibility, parseAcceptanceCriteria, parseCriticalUserFlows, parseSpec,
 } from './spec-validator.mjs';
@@ -78,6 +82,35 @@ export function commitPaths(workspace, paths, message) {
   git(workspace, ['add', '--', ...targets]);
   git(workspace, ['commit', '-m', message, '--', ...targets]);
   return true;
+}
+
+/** Where a delivered APK is kept: next to the repository, never inside it. */
+export const ARTIFACT_DIR = 'artifacts';
+
+/**
+ * Copies the delivered APK out of `build/` and returns the path to record.
+ *
+ * `build/` belongs to the toolchain. `flutter clean`, a cache sweep or any
+ * rebuild may empty it, and a database row pointing inside it then names a file
+ * that is simply gone — the panel's download link breaks with no trace of why.
+ * One real cleanup had to rescue nine APKs by hand to keep those links alive.
+ * The copy lives beside the repository rather than in it, so it can never be
+ * mistaken for an agent's uncommitted change.
+ *
+ * Returns the source path when the copy fails: a finished run must not be lost
+ * over a file copy, and the build output is still there at that moment.
+ */
+export function preserveArtifact(workspace, apkRelativePath) {
+  const source = path.join(workspace, apkRelativePath);
+  if (!fs.existsSync(source)) return source;
+  const target = path.join(path.dirname(workspace), ARTIFACT_DIR, path.basename(source));
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
+    return target;
+  } catch {
+    return source;
+  }
 }
 
 function isPipelineGeneratedArtifact(filePath) {
@@ -354,6 +387,7 @@ export class Orchestrator {
     database, runner, projectsDir, maxConcurrentRuns = 2, flutterChecker = null,
     deviceTester = null, maxConcurrentAgents = 5, maxParallelBuilders = 4, tokenBudget = 0,
     deviceMinFreeMb = 1536, deviceReclaimBelowMb = DEFAULT_RECLAIM_BELOW_MB, deviceAvd = null,
+    agentModels = {},
     flutterTimeoutMs = 600_000, releaseBuilder = null,
   }) {
     this.database = database;
@@ -370,6 +404,9 @@ export class Orchestrator {
     this.deviceMinFreeMb = deviceMinFreeMb;
     this.deviceReclaimBelowMb = deviceReclaimBelowMb;
     this.deviceAvd = deviceAvd;
+    // Role-by-role model/effort. An unassigned role passes no flag at all, so it
+    // keeps whatever Codex's own configuration says — today's behaviour.
+    this.agentModels = agentModels;
     this.flutterTimeoutMs = flutterTimeoutMs;
     // Test seam for the release build, mirroring flutterChecker/deviceTester.
     this.releaseBuilder = releaseBuilder;
@@ -651,6 +688,12 @@ export class Orchestrator {
 
   async #runAgentWithSlot({ projectId, taskKey, agentName, role, workspace, prompt }) {
     if (['flutter_builder', 'integration', 'test_strategy', 'device_repair', 'repair', 'review_repair'].includes(role)) {
+      // The measured failure this rule exists for: a run lost three repair rounds
+      // and a whole project to `SemanticsFlags.hasFlag` and `SemanticsNode.actions`
+      // — symbols that do not exist. An invented API is not caught where it is
+      // written; it surfaces in the analyzer three stages later, and repair then
+      // guesses at it too, because nothing in the loop knows the real SDK surface.
+      prompt += '\nUse only Flutter and Dart APIs that exist in the installed SDK. If you are not certain a class, member or named argument exists, copy a pattern already used in this repository or read the SDK source instead of guessing — an invented API is not a small mistake here: it compiles into an analyzer failure several stages later and costs a full repair round. This applies to test-only APIs too, especially the semantics and finder helpers.';
       prompt += '\nIntegration tests run together in one installed test application. Keep main() synchronous for test registration. Use setUp/tearDown/addTearDown to reset providers, controllers, database connections, temporary storage and global state for each scenario. Use isolated databases; persistence tests reopen their own database within the same scenario. Do not rely on uninstall/reinstall between test files. Do not skip tests or weaken assertions to accommodate shared execution.';
     }
     const currentTaskId = taskKey.includes(':') ? taskKey : taskId(projectId, taskKey);
@@ -668,10 +711,15 @@ export class Orchestrator {
       started_at: new Date().toISOString(), error: null,
     });
     this.#syncProjectState(projectId, this.database.getProject(projectId).workspace_path);
+    const assignment = this.agentModels[role] ?? { model: null, effort: null };
     this.database.updateAgentRun(runId, {
       status: 'running', started_at: new Date().toISOString(), checkpoint_commit: checkpointCommit,
       context_chars: contextPackage.prompt.length,
       context_manifest: JSON.stringify(contextPackage.manifest),
+      // Null means the Studio asked for nothing and Codex's configuration chose.
+      // The exec JSON stream reports no model, so this is a record of the
+      // request, never a claim about what ran.
+      model: assignment.model, reasoning_effort: assignment.effort,
     });
     const onEvent = (type, payload) => {
       this.database.addEvent(projectId, type, { agent: agentName, role, ...payload });
@@ -690,7 +738,10 @@ export class Orchestrator {
       this.database.addEvent(projectId, 'context.packaged', {
         agent: agentName, role, chars: contextPackage.prompt.length, manifest: contextPackage.manifest,
       });
-      const finalMessage = await this.runner.run({ workspace, prompt: packagedPrompt, onEvent });
+      const finalMessage = await this.runner.run({
+        workspace, prompt: packagedPrompt, onEvent,
+        model: assignment.model, effort: assignment.effort,
+      });
       this.database.updateAgentRun(runId, {
         status: 'completed', final_message: finalMessage, completed_at: new Date().toISOString(),
       });
@@ -740,9 +791,12 @@ export class Orchestrator {
     return worktree;
   }
 
-  #commitArtifact(workspace, artifact, message) {
-    if (!fs.existsSync(path.join(workspace, artifact))) {
-      throw new Error(`${artifact} agent tarafından oluşturulmadı.`);
+  #commitArtifact(workspace, artifacts, message) {
+    const owned = Array.isArray(artifacts) ? artifacts : [artifacts];
+    for (const artifact of owned) {
+      if (!fs.existsSync(path.join(workspace, artifact))) {
+        throw new Error(`${artifact} agent tarafından oluşturulmadı.`);
+      }
     }
     // Compare whole paths: a suffix match would also accept OTHER_ARCHITECTURE.md.
     const status = spawnSync('git', ['status', '--short', '--untracked-files=all'], {
@@ -755,11 +809,11 @@ export class Orchestrator {
       .split(/\r?\n/)
       .filter(Boolean)
       .map(line => line.slice(3).trim().replace(/^"|"$/g, '').replaceAll('\\', '/'))
-      .filter(changed => changed !== artifact);
+      .filter(changed => !owned.includes(changed));
     if (unexpected.length) {
       throw new Error(`Agent izin verilmeyen dosyaları değiştirdi: ${unexpected.join(', ')}`);
     }
-    commitPaths(workspace, [artifact], message);
+    commitPaths(workspace, owned, message);
   }
 
   /**
@@ -767,6 +821,47 @@ export class Orchestrator {
    * contract is discarded and requested once more with the concrete reason, so a
    * bad plan cannot lock the project on every later resume.
    */
+  /**
+   * Checks the design contract and, on violation, asks the UX agent to correct it
+   * once with the reasons — the same shape as the rejected `TASK_PLAN.json` path.
+   *
+   * Only ever one retry: a contract an agent cannot satisfy twice is a spec or
+   * model problem, and looping would spend tokens discovering that slowly. A
+   * project created before this contract existed has no file and is left alone,
+   * because retrofitting a design onto finished code is not a repair.
+   */
+  async #settleDesignTokens(projectId, workspace) {
+    if (!designTokensExist(workspace)) return null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const tokens = readDesignTokens(workspace);
+        this.database.addEvent(projectId, 'design_tokens.accepted', {
+          font_family: tokens.font_family,
+          signature_element: tokens.signature_element.name,
+          typography_roles: tokens.typography.length,
+        });
+        return tokens;
+      } catch (error) {
+        this.database.addEvent(projectId, 'design_tokens.rejected', {
+          attempt, error: error.message,
+        });
+        if (attempt === 2) throw new Error(`${DESIGN_TOKENS_PATH} sözleşmesi karşılanamadı: ${error.message}`);
+        // Reuses the existing agent/ux worktree; #createWorktree returns early
+        // when it is already checked out, so a correction round never re-adds it.
+        const uxWorkspace = this.#createWorktree(workspace, path.dirname(workspace), 'ux');
+        this.database.updateTask(taskId(projectId, 'ux'), { status: 'pending', error: null });
+        await this.#runAgent({
+          projectId, taskKey: 'ux', agentName: 'UX Agent', role: 'ux', workspace: uxWorkspace,
+          prompt: `${DESIGN_TOKENS_PATH} reddedildi. Yalnız bu dosyayı düzelt, UX_SPEC.md'ye dokunma.\n\n${error.message}\n\nKontrast oranlarını gerçekten hesapla; reddedilen değerleri tekrar yazma.`,
+        });
+        this.#commitArtifact(uxWorkspace, [DESIGN_TOKENS_PATH], 'fix: correct design tokens');
+        this.#completeTask(projectId, 'ux', uxWorkspace);
+        if (branchAhead(workspace, 'agent/ux')) git(workspace, ['merge', '--no-edit', 'agent/ux']);
+      }
+    }
+    return null;
+  }
+
   async #produceTaskPlan(projectId, workspace) {
     // Once builders exist the plan is already bound to database tasks; revalidating
     // it here could discard a plan the running graph depends on.
@@ -779,7 +874,7 @@ export class Orchestrator {
       if (!fs.existsSync(planPath)) {
         await this.#runAgent({
           projectId, taskKey: 'coordinator', agentName: 'Coordinator Agent', role: 'coordinator', workspace,
-          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md, UX_SPEC.md, DATA_MODEL.md and TEST_STRATEGY.md when present. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create ${Math.max(2, minTasks)} to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum. The dependency graph must reach width ${targetParallelism}, and at least ${targetParallelism} tasks must have an empty depends_on array so the first builder wave starts at full concurrency with disjoint paths. Do not make a shared foundation task a prerequisite of every feature; assign contracts and shared files to explicit owners, then let Integration reconcile cross-feature seams. Split by feature/module ownership, not by technical layer, and keep shared shell files with one owner. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, data-model, test-strategy, coordinator, integration, test, repair or reviewer. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. Assign every USER_FLOWS.json flow and acceptance criterion to a builder; require integration_test/<flow-name>_test.dart outputs that exercise real feature boundaries and persistence. Device tests must not assume a widget is laid out: after entering text, dismiss focus or scroll the target into view before asserting it is present, because the on-screen keyboard shrinks the viewport and a lazily built list never creates the row that no longer fits. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
+          prompt: `Read PROJECT_SPEC.md, USER_FLOWS.json, ARCHITECTURE.md, UX_SPEC.md, DATA_MODEL.md, DESIGN_TOKENS.json and TEST_STRATEGY.md when present. Produce only TASK_PLAN.json with {"version":1,"profile":"flutter_mobile","dependencies":[],"tasks":[]}. The Flutter application skeleton already exists: pubspec.yaml, android/, analysis_options.yaml and a placeholder lib/main.dart are committed. List every extra pub.dev package the MVP needs in the top-level "dependencies" array (for example ["sqflite","path"]); the orchestrator installs them with flutter pub add. Never list packages that ship with the Flutter SDK — flutter, flutter_test and integration_test are already available and naming them breaks dependency resolution. No task may claim pubspec.yaml or pubspec.lock. Create ${Math.max(2, minTasks)} to ${limit} coarse Flutter implementation tasks; ${limit} is a hard maximum. The dependency graph must reach width ${targetParallelism}, and at least ${targetParallelism} tasks must have an empty depends_on array so the first builder wave starts at full concurrency with disjoint paths. Do not make a shared foundation task a prerequisite of every feature; assign contracts and shared files to explicit owners, then let Integration reconcile cross-feature seams. Split by feature/module ownership, not by technical layer, and keep shared shell files with one owner. Every task needs a lowercase kebab-case id, title, prompt, depends_on, allowed_paths, required_outputs, acceptance_checks and priority. Task ids must not be architecture, ux, data-model, test-strategy, coordinator, integration, test, repair or reviewer. Two tasks without a dependency path between them run at the same time and must own strictly disjoint paths: nesting counts as a conflict, so test/features/** and test/features/detail/** cannot belong to different independent tasks. DESIGN_TOKENS.json names a signature element and the surfaces it must appear on: every surface in that list belongs to some task, so name it in that task prompt. A previous run built the signature element on one screen only and lost an acceptance criterion at review. Assign every USER_FLOWS.json flow and acceptance criterion to a builder; require integration_test/<flow-name>_test.dart outputs that exercise real feature boundaries and persistence. Device tests must not assume a widget is laid out: after entering text, dismiss focus or scroll the target into view before asserting it is present, because the on-screen keyboard shrinks the viewport and a lazily built list never creates the row that no longer fits. Verify foreign-key/reference fields are supplied by entity selection, not free text. required_outputs must contain repository-relative source or test file paths only. Never assign build/**, APK files, TEST_REPORT.json or TEST_REPORT.md to builder tasks; the integration quality gate produces those after every builder branch is merged. Reserve lib/main.dart for the task that owns the application shell. Do not implement code.${correction}`,
         });
         this.#commitArtifact(workspace, 'TASK_PLAN.json', 'docs: add coordinated task plan');
       }
@@ -1223,6 +1318,43 @@ export class Orchestrator {
   }
 
   /**
+   * Records whether the design contract reached the code.
+   *
+   * Explicitly not a gate and explicitly not wired to any repair round. A scan
+   * that blocked, or that a repair agent was told to clear, would be optimised
+   * against — the pipeline would learn to add an empty gradient and we would have
+   * traded a bland app for a decorated one. Every check compares code against the
+   * project's own tokens, so there is no house style to conform to and nothing to
+   * satisfy with ornament.
+   *
+   * A project created before the contract has no token file and is reported as
+   * unmeasured rather than as lacking.
+   */
+  #recordDesignAdherence(projectId, workspace) {
+    try {
+      let tokens = null;
+      if (designTokensExist(workspace)) {
+        // A contract that no longer validates is treated as absent rather than
+        // allowed to throw: this step must never fail a finished run.
+        try {
+          tokens = readDesignTokens(workspace);
+        } catch {
+          tokens = null;
+        }
+      }
+      const report = writeDesignReport(workspace, runDesignDiagnostics({ workspace, tokens }));
+      commitPaths(workspace, [DESIGN_REPORT_PATH], 'chore: record design adherence report');
+      this.database.addEvent(projectId, 'design_adherence.completed', {
+        status: report.status, warnings: report.warnings.length, usage: report.usage,
+      });
+      return report;
+    } catch (error) {
+      this.database.addEvent(projectId, 'design_adherence.failed', { error: error.message });
+      return null;
+    }
+  }
+
+  /**
    * Deterministic completeness measurement, recorded once the delivered code is
    * final. It reads the generated sources only, so it costs no toolchain
    * command, no device and no agent turn.
@@ -1404,7 +1536,7 @@ export class Orchestrator {
       this.database.updateProject(projectId, {
         status: 'device_testing',
         quality_report: JSON.stringify(qualityReport),
-        artifact_path: path.join(workspace, qualityReport.checks.apk.path),
+        artifact_path: preserveArtifact(workspace, qualityReport.checks.apk.path),
       });
     }
   }
@@ -1429,7 +1561,7 @@ export class Orchestrator {
       this.#completeTask(id, 'repair', workspace, 'Kullanıcı geri bildirimi uygulandı ve doğrulandı.');
       this.database.updateProject(id, {
         quality_report: JSON.stringify(verified),
-        artifact_path: path.join(workspace, verified.checks.apk.path),
+        artifact_path: preserveArtifact(workspace, verified.checks.apk.path),
       });
 
       // Technical checks never prove the critical flows still work; the feedback
@@ -1458,9 +1590,10 @@ export class Orchestrator {
       }
       this.#completeTask(id, 'reviewer', workspace, reviewerMessage);
       this.#recordApplicationCompleteness(id, workspace);
+      this.#recordDesignAdherence(id, workspace);
       this.database.updateProject(id, {
         status: 'awaiting_user_review', final_message: reviewerResult.summary,
-        quality_report: JSON.stringify(verified), artifact_path: path.join(workspace, verified.checks.apk.path),
+        quality_report: JSON.stringify(verified), artifact_path: preserveArtifact(workspace, verified.checks.apk.path),
         user_feedback: null, error: null,
       });
       this.#syncProjectState(id, workspace);
@@ -1640,8 +1773,32 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
           prompt: 'Read PROJECT_SPEC.md and USER_FLOWS.json. Produce only ARCHITECTURE.md. Define feature-first boundaries, dependency direction, file ownership, cross-feature contracts, platform services, implementation risks and integration points. Keep data-schema details in DATA_MODEL.md and test-case details in TEST_STRATEGY.md when those agents are present. Do not implement the application.',
         },
         {
-          key: 'ux', role: 'ux', name: 'UX Agent', artifact: 'UX_SPEC.md', commit: 'docs: add UX plan',
-          prompt: 'Read PROJECT_SPEC.md and USER_FLOWS.json. Produce only UX_SPEC.md. Turn the Design DNA, tokens, screen-state matrix and responsive rules into a distinctive component and interaction system. Define every screen/state, content hierarchy, accessibility behavior and cross-feature entity selection. Include machine-testable UI checks separately from manual inspection suggestions. Do not implement the application.',
+          key: 'ux',
+          role: 'ux',
+          name: 'UX Agent',
+          artifact: ['UX_SPEC.md', DESIGN_TOKENS_PATH],
+          // The prose half is UX_SPEC.md; the enforceable half is DESIGN_TOKENS.json.
+          // Prose alone could not be checked, and two accepted MVPs shipped with
+          // the platform default font and no depth at all because of it.
+          commit: 'docs: add UX plan and design tokens',
+          prompt: `Read PROJECT_SPEC.md and USER_FLOWS.json. Produce exactly two files: UX_SPEC.md and ${DESIGN_TOKENS_PATH}.
+
+UX_SPEC.md: turn the Design DNA, screen-state matrix and responsive rules into a distinctive component and interaction system. Define every screen/state, content hierarchy, accessibility behavior and cross-feature entity selection. Include machine-testable UI checks separately from manual inspection suggestions.
+
+${DESIGN_TOKENS_PATH} is a machine-checked contract. Shape:
+{"version":1,
+ "font_family":"<a named family the app will actually use, not the platform default>",
+ "signature_element":{"name":"<product-specific element>","description":"<what it shows, at least 20 characters>","surfaces":["<screen or surface it appears on>","<and another>"]},
+ "colors":{"light":{"surface":"#RRGGBB","onSurface":"#RRGGBB","surfaceVariant":"#RRGGBB","onSurfaceVariant":"#RRGGBB","primary":"#RRGGBB","onPrimary":"#RRGGBB","error":"#RRGGBB","onError":"#RRGGBB","outline":"#RRGGBB"},"dark":{ the same nine roles }},
+ "typography":[{"role":"display","size":32,"weight":700,"lineHeight":1.2}, at least five roles, at least three distinct sizes],
+ "spacing":[4,8,12,16,24,32],
+ "radius":[4,8,16],
+ "elevation":[0,1,6],
+ "motion":{"fast":150,"medium":220}}
+
+Contrast is verified mechanically against WCAG: onSurface/surface, onSurfaceVariant/surfaceVariant, onPrimary/primary and onError/error must each reach 4.5:1, and outline/surface must reach 3:1, in BOTH light and dark. Pick real values and check them; a scheme that fails is rejected.
+
+"surfaces" lists every screen or surface the signature element appears on, taken from the spec's visual-richness section — at least two. A previous run declared a signature element, built it on one screen only, and the omission surfaced as a blocked acceptance criterion at review. Naming the surfaces here is what makes it a contract the builders can be held to. Do not implement the application.`,
         },
         {
           key: 'data-model', role: 'data_model', name: 'Data Contract Agent', artifact: 'DATA_MODEL.md',
@@ -1661,7 +1818,10 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
       }));
       this.#readyTasks(id, planningRuns.map(agent => agent.key), planningRuns.length);
       await Promise.all(planningRuns.map(agent => (
-        fs.existsSync(path.join(agent.workspace, agent.artifact)) && !gitChanged(agent.workspace)
+        // A planning agent may own several artifacts; it is only skippable when
+        // every one of them is already there and its worktree is clean.
+        [agent.artifact].flat().every(name => fs.existsSync(path.join(agent.workspace, name)))
+          && !gitChanged(agent.workspace)
           ? Promise.resolve()
           : this.#runAgent({
             projectId: id, taskKey: agent.key, agentName: agent.name,
@@ -1679,6 +1839,8 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
           git(workspace, ['merge', '--no-edit', `agent/${agent.key}`]);
         }
       }
+
+      await this.#settleDesignTokens(id, workspace);
 
       this.#readyTasks(id, ['coordinator'], 1);
       await this.#produceTaskPlan(id, workspace);
@@ -1701,7 +1863,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         this.#readyTasks(id, ['integration'], 1);
         await this.#runAgent({
           projectId: id, taskKey: 'integration', agentName: 'Integration Agent', role: 'integration', workspace,
-          prompt: `Inspect the merged Flutter task branches against PROJECT_SPEC.md, USER_FLOWS.json and TASK_PLAN.json. Resolve only concrete integration issues, including cross-feature ID/reference contracts and missing integration tests for critical flows. Keep planning documents unchanged and ensure the project structure is coherent. For an offline product, android/app/src/main/AndroidManifest.xml must omit INTERNET, while debug and profile manifests must retain android.permission.INTERNET for Flutter tooling and VM Service discovery. Do not run flutter, dart, pub or Gradle commands; the orchestrator runs all toolchain checks outside the agent sandbox. Do not expand scope or deploy.`,
+          prompt: `Inspect the merged Flutter task branches against PROJECT_SPEC.md, USER_FLOWS.json, DESIGN_TOKENS.json and TASK_PLAN.json. Reconcile visual drift between features as well as logical seams: every screen must read its colours, type ramp, spacing, radius, elevation and durations from the shared theme, so replace any hard-coded value a builder left behind with the token it belongs to. Resolve only concrete integration issues, including cross-feature ID/reference contracts and missing integration tests for critical flows. Keep planning documents unchanged and ensure the project structure is coherent. For an offline product, android/app/src/main/AndroidManifest.xml must omit INTERNET, while debug and profile manifests must retain android.permission.INTERNET for Flutter tooling and VM Service discovery. Do not run flutter, dart, pub or Gradle commands; the orchestrator runs all toolchain checks outside the agent sandbox. Do not expand scope or deploy.`,
         });
         git(workspace, ['add', '-A']);
         if (gitChanged(workspace)) git(workspace, ['commit', '-m', 'chore: integrate parallel Flutter tasks']);
@@ -1725,7 +1887,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
 
       this.database.updateProject(id, {
         status: 'technically_verified', quality_report: JSON.stringify(verifiedReport),
-        artifact_path: path.join(workspace, verifiedReport.checks.apk.path),
+        artifact_path: preserveArtifact(workspace, verifiedReport.checks.apk.path),
       });
       // The Reviewer only reads the workspace, so it thinks while the device gate
       // installs and exercises the APK. Any device repair writes to the same
@@ -1821,7 +1983,7 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
           }), { workspace });
           this.database.updateProject(id, {
             quality_report: JSON.stringify(verifiedReport),
-            artifact_path: path.join(workspace, verifiedReport.checks.apk.path),
+            artifact_path: preserveArtifact(workspace, verifiedReport.checks.apk.path),
           });
           if (this.#deviceGateEnabled()) {
             this.database.updateProject(id, { status: 'device_testing' });
@@ -1839,10 +2001,11 @@ Your final response must be JSON only, in this shape: {"status":"PASS","summary"
         ?? (await this.#settleReviewVerdict(id, workspace, reviewerMessage)).verdict;
 
       this.#recordApplicationCompleteness(id, workspace);
+      this.#recordDesignAdherence(id, workspace);
       this.database.updateProject(id, {
         status: 'awaiting_user_review', final_message: reviewerResult.summary || reviewerMessage,
         quality_report: JSON.stringify(verifiedReport),
-        artifact_path: path.join(workspace, verifiedReport.checks.apk.path),
+        artifact_path: preserveArtifact(workspace, verifiedReport.checks.apk.path),
         user_feedback: null, accepted_at: null,
       });
       this.#syncProjectState(id, workspace);

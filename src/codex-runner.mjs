@@ -63,11 +63,25 @@ export class CodexRunner {
     });
   }
 
-  async run({ workspace, prompt, onEvent }) {
+  /**
+   * `--model` is a first-class exec flag; reasoning effort is a config override.
+   * Both are omitted when unset, so an unassigned role behaves exactly as before.
+   */
+  static modelArgs({ model = null, effort = null } = {}) {
+    const args = [];
+    if (model) args.push('--model', String(model));
+    if (effort) args.push('-c', `model_reasoning_effort=${effort}`);
+    return args;
+  }
+
+  async run({ workspace, prompt, onEvent, model = null, effort = null }) {
     return new Promise((resolve, reject) => {
       let child;
       try {
-        const invocation = this.invocation(['exec', '--json', '--sandbox', 'workspace-write', '-']);
+        const invocation = this.invocation([
+          'exec', '--json', '--sandbox', 'workspace-write',
+          ...CodexRunner.modelArgs({ model, effort }), '-',
+        ]);
         child = spawn(
           invocation.command,
           invocation.args,

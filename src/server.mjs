@@ -23,6 +23,7 @@ const orchestrator = new Orchestrator({
   deviceMinFreeMb: config.deviceMinFreeMb,
   deviceReclaimBelowMb: config.deviceReclaimBelowMb,
   deviceAvd: config.deviceAvd,
+  agentModels: config.agentModels,
   flutterTimeoutMs: config.flutterTimeoutMs,
 });
 const indexPath = path.join(config.root, 'src', 'mvp_studio', 'static', 'index.html');
@@ -143,9 +144,13 @@ export function createServer() {
       if (artifactMatch) {
         const project = database.getProject(artifactMatch[1]);
         if (!project?.artifact_path) { sendJson(response, 404, { detail: 'APK bulunamadı.' }); return; }
-        const workspace = path.resolve(project.workspace_path);
+        // The delivered APK is kept beside the repository (projects/<id>/artifacts)
+        // so a `flutter clean` cannot take the download link with it, while older
+        // rows still point inside the repository's build directory. Containment is
+        // therefore checked against the project directory, which covers both.
+        const projectRoot = path.dirname(path.resolve(project.workspace_path));
         const artifact = path.resolve(project.artifact_path);
-        const relative = path.relative(workspace, artifact);
+        const relative = path.relative(projectRoot, artifact);
         if (relative.startsWith('..') || path.isAbsolute(relative) || !fs.existsSync(artifact)) {
           sendJson(response, 404, { detail: 'APK bulunamadı.' }); return;
         }
@@ -176,6 +181,11 @@ export function createServer() {
         if (!project) sendJson(response, 404, { detail: 'Proje bulunamadı.' });
         else sendJson(response, 200, {
           ...project,
+          // A recorded path is not a downloadable file: runs from before the APK
+          // was copied out of build/ still point into a directory the toolchain
+          // may have emptied. The panel hides the link rather than offering a 404.
+          artifact_available: Boolean(project.artifact_path)
+            && fs.existsSync(path.resolve(project.artifact_path)),
           release_evaluating: orchestrator.isEvaluatingRelease(match[1]),
           agent_runs: database.listAgentRuns(match[1]),
           tasks: database.listTasks(match[1]),

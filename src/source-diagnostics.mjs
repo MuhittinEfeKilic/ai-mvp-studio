@@ -136,6 +136,47 @@ export function findSilentErrorHandling(source, filePath = '') {
   return findings;
 }
 
+/**
+ * A lead byte of a two-byte UTF-8 sequence followed by a continuation byte, both
+ * read as Latin-1 characters. This is what double encoding leaves behind: the
+ * bytes `C3 BC` (ü) become `C3 83 C2 BC`, which decodes as `Ã¼` — U+00C3 then
+ * U+00BC. The second character is restricted to U+0080–U+00BF, a range no real
+ * word uses after a capital letter, so legitimate text cannot match.
+ */
+const MOJIBAKE = /[Â-Å][\u0080-¿]/g;
+
+/**
+ * Reports text an agent double-encoded while writing the file.
+ *
+ * The measured failure: a repair agent rewrote `günlük seri` as `gÃ¼nlÃ¼k seri`.
+ * Nothing mechanical saw it — analyze, test, the APK build and the completeness
+ * scan all pass on mojibake, because it is valid Dart and a valid string. The
+ * reviewer caught it only because that string happened to be in a file it read,
+ * and the detour cost 106.506 tokens.
+ *
+ * This blocks rather than warns, because the output criterion is not a matter of
+ * taste: a Dart source carrying `Ã` + a continuation character is never what
+ * anyone wrote on purpose.
+ */
+export function findBrokenEncoding(source, filePath = '') {
+  const text = String(source ?? '');
+  const findings = [];
+  const seen = new Set();
+  for (const match of text.matchAll(MOJIBAKE)) {
+    const line = lineOf(text, match.index);
+    // One finding per line: a corrupted word usually trips the pattern twice.
+    if (seen.has(line)) continue;
+    seen.add(line);
+    findings.push({
+      file: String(filePath).replaceAll('\\', '/'),
+      line,
+      identifier: match[0],
+      reason: `metin kodlaması bozuk (${JSON.stringify(match[0])} — çift kodlanmış UTF-8)`,
+    });
+  }
+  return findings;
+}
+
 function dartFiles(root) {
   if (!fs.existsSync(root)) return [];
   return fs.readdirSync(root, { withFileTypes: true }).flatMap(entry => {
@@ -150,22 +191,23 @@ function dartFiles(root) {
 export function runSourceDiagnostics(workspace) {
   const findings = SCANNED_DIRECTORIES.flatMap(directory => {
     const root = path.join(workspace, directory);
-    return dartFiles(root).flatMap(file => findSilentErrorHandling(
-      fs.readFileSync(file, 'utf8'),
-      path.relative(workspace, file),
-    ));
+    return dartFiles(root).flatMap(file => {
+      const source = fs.readFileSync(file, 'utf8');
+      const relative = path.relative(workspace, file);
+      return [...findSilentErrorHandling(source, relative), ...findBrokenEncoding(source, relative)];
+    });
   }).sort((left, right) => left.file.localeCompare(right.file, 'en') || left.line - right.line);
 
   const lines = findings.map(finding => `${finding.file}:${finding.line} — ${finding.reason}`);
   const summary = findings.length
     ? [
-      `${findings.length} noktada teşhis edilemeyen hata yönetimi bulundu.`,
+      `${findings.length} noktada teşhis edilemeyen hata yönetimi veya bozuk metin kodlaması bulundu.`,
       ...lines.slice(0, MAX_REPORTED_FINDINGS),
       findings.length > MAX_REPORTED_FINDINGS
         ? `… ${findings.length - MAX_REPORTED_FINDINGS} kayıt daha: QUALITY_LOGS/diagnostics.log`
         : 'Tam liste: QUALITY_LOGS/diagnostics.log',
     ].join('\n')
-    : 'Sessiz hata yutma bulunmadı.';
+    : 'Sessiz hata yutma veya bozuk kodlama bulunmadı.';
 
   return {
     check: {
@@ -175,6 +217,6 @@ export function runSourceDiagnostics(workspace) {
       details: summary,
     },
     findings,
-    log: lines.length ? lines.join('\n') : 'Sessiz hata yutma bulunmadı.',
+    log: lines.length ? lines.join('\n') : 'Sessiz hata yutma veya bozuk kodlama bulunmadı.',
   };
 }

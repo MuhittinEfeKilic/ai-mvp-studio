@@ -530,8 +530,11 @@
     function agentTotals(runs) {
       const byRole = new Map();
       for (const run of runs) {
-        const entry = byRole.get(run.role) || { role: run.role, count: 0, ms: 0, fresh: 0, out: 0 };
+        const entry = byRole.get(run.role)
+          || { role: run.role, count: 0, ms: 0, fresh: 0, out: 0, models: new Set() };
         entry.count += 1;
+        // Blank means the Studio pinned nothing and Codex's own configuration chose.
+        if (run.model) entry.models.add(run.model + (run.reasoning_effort ? ':' + run.reasoning_effort : ''));
         entry.ms += runSpan(run);
         entry.fresh += Math.max(0, (run.input_tokens || 0) - (run.cached_input_tokens || 0));
         entry.out += Number(run.output_tokens || 0);
@@ -826,7 +829,7 @@
     function signature(project) {
       return JSON.stringify([
         project.id, project.status, project.error, project.final_message,
-        project.quality_report, project.device_report, project.artifact_path,
+        project.quality_report, project.device_report, project.artifact_available,
         project.release_report, project.release_evaluating, project.completeness_report,
         (project.tasks || []).map(task => [task.id, task.status, task.attempt_count, task.error]),
         (project.agent_runs || []).map(run => [run.id, run.status, run.output_tokens, run.context_chars]),
@@ -918,7 +921,7 @@
               <div class="path" title="${esc(project.workspace_path).replaceAll('"', '&quot;')}">${['overview', 'validation'].includes(activeTab) ? `${esc(project.id.slice(0, 12))} · ` : ''}${esc(project.workspace_path)}</div>
             </div>
             <div class="head-actions">
-              ${project.artifact_path ? `<a class="btn" href="/api/projects/${project.id}/artifact">APK indir</a>` : ''}
+              ${project.artifact_available ? `<a class="btn" href="/api/projects/${project.id}/artifact">APK indir</a>` : ''}
               ${['overview', 'validation'].includes(activeTab) && project.status === 'awaiting_user_review' ? '<button class="btn primary" data-act="accept">Ürünü kabul et</button>' : ''}
               ${['overview', 'validation'].includes(activeTab) && project.status === 'accepted' ? `<button class="btn primary" data-act="release" ${project.release_evaluating ? 'disabled' : ''}>${project.release_evaluating ? 'Release değerlendiriliyor…' : 'Release hazırlığını değerlendir'}</button>` : ''}
               ${canResume ? `<button class="btn primary" data-act="resume">${project.status === 'awaiting_device_test' ? 'Cihaz testini yeniden dene' : 'Checkpoint’ten devam et'}</button>` : ''}
@@ -1173,7 +1176,8 @@
       const runDuration = run => intervalFor(run) ? formatMs(intervalFor(run).end - intervalFor(run).start) : '—';
       const roleRows = totals.map(entry => `<tr><td>${esc(roleLabel(entry.role))}</td><td class="num">${entry.count}</td>
         <td class="num">${formatMs(entry.ms)}</td><td class="num">${summed ? Math.round(entry.ms / summed * 100) : 0}%</td>
-        <td class="num">${num(entry.fresh)}</td><td class="num">${num(entry.out)}</td></tr>`).join('');
+        <td class="num">${num(entry.fresh)}</td><td class="num">${num(entry.out)}</td>
+        <td class="mono">${entry.models.size ? esc([...entry.models].join(', ')) : '—'}</td></tr>`).join('');
       return `<div class="execution">
         <section aria-label="Çalışma özeti" class="execution-metrics project-metrics project-rail">
           ${metric(`${done} / ${tasks.length}`, 'Tamamlanan görev')}
@@ -1207,10 +1211,10 @@
           <div class="execution-budget-line"><strong>${num(billable)}</strong><span>faturalanabilir token · proje toplamı</span><span class="execution-budget-limit">${tokenBudget ? `${num(tokenBudget)} / koşu limiti` : 'Sınırsız'}</span></div>
           ${tokenBudget ? `<div class="budget" aria-label="Proje toplamının tek koşu limitine oranı"><i style="width:${Math.min(100, billable / tokenBudget * 100)}%"></i></div>
             <p class="execution-caption">Proje toplamı / tek koşu limiti: %${num(Math.round(billable / tokenBudget * 100))}. Bu oran güncel koşunun bütçe tüketimi değildir.</p>` : ''}
-          <p class="execution-caption">Faturalanabilir = cache dışı giriş + çıkış. Devam ettirmek yeni bütçe başlatır; güncel koşunun sıfırlama başlangıcı API’de bulunmuyor.</p>
+          <p class="execution-caption">Faturalanabilir = cache dışı giriş + çıkış. Devam ettirmek yeni bütçe başlatır; güncel koşunun sıfırlama başlangıcı API’de bulunmuyor. “İstenen model” Studio’nun Codex’ten istediğidir; boşsa istek yapılmamış ve Codex kendi yapılandırmasını kullanmıştır.</p>
         </section>
         ${executionDetails('roles', `Rol bazında süre ve tokenlar <span class="muted">${totals.length} rol</span>`,
-          `<div class="execution-table" tabindex="0" role="region" aria-label="Rol tablosu"><table><thead><tr><th>Rol</th><th>Koşu</th><th>Toplam süre</th><th>Pay</th><th>Cache dışı giriş</th><th>Çıkış</th></tr></thead><tbody>${roleRows || '<tr><td colspan="6">Henüz koşu yok.</td></tr>'}</tbody></table></div>`, 'project-rail project-rail--wide')}
+          `<div class="execution-table" tabindex="0" role="region" aria-label="Rol tablosu"><table><thead><tr><th>Rol</th><th>Koşu</th><th>Toplam süre</th><th>Pay</th><th>Cache dışı giriş</th><th>Çıkış</th><th>İstenen model</th></tr></thead><tbody>${roleRows || '<tr><td colspan="7">Henüz koşu yok.</td></tr>'}</tbody></table></div>`, 'project-rail project-rail--wide')}
         ${executionDetails('runs', `Tekil agent koşuları <span class="muted">${runs.length} koşu</span>`,
           runs.length ? runs.slice().reverse().map(run => {
             const task = executionTask(run, tasks);

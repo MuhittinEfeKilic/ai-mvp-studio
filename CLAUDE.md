@@ -2,6 +2,14 @@
 
 Follow `AGENTS.md` as the authoritative project-wide agent contract.
 
+## Orientation
+
+- Start with `README.md`. Its **Belge haritası** table says which document answers
+  which question; go there instead of scanning the repository.
+- `docs/LESSONS.md` records approaches that were tried and measured as failures.
+  Read it before changing a gate, a model/effort choice, or a contract.
+- `docs/PIPELINE.md` is the stage-by-stage reference; read only the relevant section.
+
 ## Context Efficiency
 
 - Prefer Serena symbolic tools for code discovery and navigation.

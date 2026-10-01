@@ -212,6 +212,36 @@ edilebilir bir tasarım dilidir.
 - Normal, pressed, focused, disabled, loading ve error durumları.
 - Ortak token kullanın; bütün ekranları aynı yerleşim kalıbına zorlamayın.
 
+## Görsel Zenginlik
+
+Bu bölüm "çalışıyor ama jenerik" ile "göze hitap eden" arasındaki farkı yazar.
+Ölçülen durum: kabul edilmiş iki MVP gerçek bir token dosyası ve gerçek bir imza
+öğesiyle çıktı — derinlik ve hareket kullanılmıştı (1–4 gölge, 6–7 animasyon) ama
+**tek bir çizim veya gradient yoktu**, özel font yoktu, asset yoktu. İskelet
+doğruydu, deri yoktu.
+
+- **Tipografi ölçeği:** ürün çevrimdışıdır ve manifesti `INTERNET` izni taşımaz,
+  bu yüzden `google_fonts` gibi çalışma anında font indiren bir paket
+  kullanılamaz. Platform ailesini açıkça adlandırın; kimliği boyut rampası,
+  ağırlıklar, satır yüksekliği ve harf aralığı taşısın.
+- **Derinlik:** hangi yüzeyler yükseltilmiş, hangileri düz? Gölge mi, stroke mu,
+  ikisinin karışımı mı? "Her şey düz" bir karar olabilir ama yazılmalıdır.
+- **Boş durum:** her boş durumda cümlenin yanında ne var — ikon, basit bir çizim,
+  yoksa yalnız metin mi? Yalnız metin en sık jeneriklik işaretidir.
+- **Hareket envanteri:** hangi durum değişimi animasyonlanır, hangisi anlıktır?
+  En az bir anlamlı geçiş tanımlayın ve süresini token'dan alın.
+- **İmza öğesi nerede görünür:** hangi ekranlarda, hangi durumlarda, neyi
+  anlatır? Yalnız süs değilse bir bilgi taşıması gerekir. **En az iki yüzey
+  sayın:** bu liste `DESIGN_TOKENS.json` içindeki `signature_element.surfaces`
+  alanına geçer ve koordinatör onu görevlere dağıtır. Bir koşuda imza öğesi
+  yalnız tek ekrana yazılmıştı ve eksiklik ancak incelemede görüldü.
+- **Asset politikası:** ikon seti, çizim, resim kullanılacak mı? Kullanılacaksa
+  `pubspec.yaml` `assets:` bölümüne girmelidir.
+
+Bu kararlar `DESIGN_TOKENS.json` sözleşmesine dönüşür: UX agent onu üretir,
+Studio şeklini ve **WCAG kontrast oranlarını mekanik olarak** denetler, ihlalde
+gerekçesiyle bir kez yeniden ister.
+
 ## Responsive ve Erişilebilirlik
 
 - Telefon genişlikleri, safe-area, klavye, taşma ve metin ölçekleme.

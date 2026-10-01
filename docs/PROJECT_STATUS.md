@@ -1,12 +1,16 @@
 # AI MVP Studio — Güncel Durum ve Handoff
 
-Son güncelleme: 23 Eylül 2026
+Son güncelleme: 29 Eylül 2026
 
 ## Nerede duruyoruz
 
 Studio kişisel bir startup/MVP fabrikasıdır; hedef döngü **fikir → çalışan MVP →
 yayınlanabilir MVP → gerçek kullanıcı → ölçülebilir geri bildirim → KILL / ITERATE /
-SCALE**. Amacı ve optimize ettiği şeyler [README](README.md) başında anlatılır.
+SCALE**. Amacı ve optimize ettiği şeyler [README](../README.md) başında anlatılır.
+
+Bu dosya sistemin **bugün ne olduğunu** anlatır. Denenip başarısız olmuş
+yaklaşımlar, olumsuz ölçüm sonuçları ve tekrar edilmemesi gereken hatalar
+[LESSONS.md](LESSONS.md) içindedir.
 
 Bugün uygulanmış olan kısım **fikir → doğrulanmış MVP → ölçülmüş
 yayınlanabilirlik**tir. Hat, onaylanmış bir spec'ten kalite ve cihaz kapılarını
@@ -17,6 +21,36 @@ deterministik olarak ölçülür ve gerçek bir release APK üretilir.
 **Yayınlama otomasyonu yoktur.** İmza anahtarı üretimi, mağaza yükleme, dağıtım,
 analitik ve deney sözleşmeleri hâlâ yazılmadı ve bu dosyada var gibi
 anlatılmamalıdır. Ölçülen şey yayınlanabilirlik; yapılan şey yayınlama değil.
+
+**Tasarım hattı gerçek bir koşuda sınandı (1 Ekim 2026).** Aynı spec, aynı ürün,
+tek değişen hat: `Seri Takip` sözleşmeden önce (`d3441c561fed`) ve sonra
+(`81cfde18afe2`) üretildi.
+
+| Proje | dosya | derinlik | hareket | köşe | çizim/gradient | tipografi | tema dışı sabit renk |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Seri Takip — yeni hat (`81cfde18afe2`)** | 35 | 4 | 7 | 3 | **7** | 22 | 0 |
+| **Seri Takip — eski hat (`d3441c561fed`)** | 57 | 4 | 8 | 5 | 2 | 25 | 0 |
+| Sipariş Defteri (`99c447beb0d8`) | 52 | 4 | 7 | 15 | 0 | 35 | 0 |
+| AboneCep (`1c30b97a4b89`) | 26 | 1 | 6 | 16 | 0 | 32 | 2 |
+| Akış Cep (`1d95246c0382`) | 33 | 0 | 5 | 7 | 4 | 24 | 8 |
+| Stok Cep (`b9c53b9a14bf`) | 43 | 0 | 4 | 2 | 0 | 17 | 2 |
+| Servis Cep (`a87cfbf38ea4`) | 39 | 0 | 2 | 0 | 2 | 13 | 3 |
+
+**Ölçülen getiri çizimde.** Çizim/gradient 2 → 7; kabul edilmiş iki uygulamada bu
+sayı sıfırdı. Spec'in istediği `CustomPainter` boş durum çizimleri koda girdi.
+Tipografi 35 dosyada 22 kullanım (eski hatta 57 dosyada 25), yani dosya başına
+yoğunluk 0,44 → 0,63. Derinlik, hareket ve köşe yaklaşık sabit — ama sözleşme
+`elevation: [0, 1, 6]` ile "liste ve takvim düz, yalnız diyalog ve snackbar
+yükselir" kararını taşıyordu ve kod bunu uyguladı; buradaki düzlük eksiklik değil
+karardır. `DESIGN_REPORT.json` durumu **`APPLIED`**, sıfır uyarı.
+
+Sözleşmenin **koda yansımayan** tek tarafı imza öğesinin yerleşimi oldu: Seri
+Halkası alışkanlık kataloğu satırlarında eksikti ve bunu hiçbir kapı değil,
+**reviewer** yakaladı (AC10 FAIL). Sözleşme imza öğesini beyan ettirebiliyor,
+nerede görüneceğini zorlayamıyor.
+
+Hâlâ hiçbirinde özel font veya asset yok — sözleşme bunu zaten zorlamıyor, çünkü
+ürün çevrimdışı ve agent sandbox'ının ağı yok.
 
 ### Cihaz hedefi politikası
 
@@ -69,12 +103,13 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 - Mobil spec template'i v2'dir. Advanced projeler Architecture, UX, Data Contract
   ve Test Strategy planlarını dört ayrı worktree'de eşzamanlı üretir; Coordinator
   4–8 builder görevi ve en az dört genişliğinde ayrık bir görev grafiği oluşturur.
-- Studio regresyonu: **196/196 test**. Cihaz temizliği ayrımı, cihaz hedefi
+- Studio regresyonu: **235/235 test**. Cihaz temizliği ayrımı, cihaz hedefi
   sınıflandırması, AVD adı fallback'i, reviewer sözleşme düzeltmesi, Codex stdin
   arızası, bayat APK yedeği kurtarması, deterministik process timeout'u, event loop
   canlılığı, path-scoped commit davranışı, analiz şiddet politikası,
-  spec/toolchain Android API uyumu, release hazırlık değerlendirmesi ve uygulama
-  bütünlüğü taraması kapsanır.
+  spec/toolchain Android API uyumu, rol bazlı model seçimi, tasarım sözleşmesi ve
+  tasarım uyum taraması, teslim artefaktının korunması, release hazırlık değerlendirmesi ve uygulama bütünlüğü
+  taraması kapsanır.
 - **Orchestrator commit'leri path-scoped'tur.** `commitPaths` hem "değişen var mı"
   sorusunu hem commit'i aynı yollarla sınırlar. Bunun öncesinde dar bir `git add`,
   bütün çalışma ağacına bakan `gitChanged()` ile korunuyordu; hattın sahibi olmadığı
@@ -86,10 +121,35 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
   Taban SDK kaynağından okunur; okunamazsa kontrol `SKIPPED`'tır.
 - **`DEVICE_REPORT.json` artık agent artefaktı gibi commit edilmiyor.** Ana
   workspace'te toolchain'in yazdığı dosya, agent sınır ihlali sayılamaz.
+- **Agent modeli rol bazında seçilebilir.** `MVP_STUDIO_AGENT_MODELS` ile
+  `role=model[:effort]`; atanmayan rol bayrak almaz ve Codex yapılandırmasını
+  kullanır. Bilinmeyen rol adı hata verir. `agent_runs` **istenen** değeri tutar,
+  kullanılanı değil — `exec --json` akışı model bildirmiyor (ölçüldü).
 - **Cihaz seçimi sabitlenebilir.** `MVP_STUDIO_AVD` ayarlıysa kapı yalnız o AVD'yi
   kullanır: adı doğrulanamayan bağlı cihazı benimsemez, gerekirse kendisi başlatır.
   Ayar boşken eski "listedeki ilk emülatör" davranışı sürer. Ayarlar `.env`
   dosyasından okunur.
+- **Tasarım sözleşmesi zorunlu ve makinece denetleniyor.** UX agent'ı artık iki
+  artefakt üretir: `UX_SPEC.md` ve `DESIGN_TOKENS.json`. İkincisi
+  `src/design-tokens.mjs` tarafından doğrulanır: dokuz zorunlu renk rolü, beş
+  kontrast çifti (metin 4.5:1, sınır 3:1, gerçek WCAG bağıl parlaklık hesabıyla),
+  en az beş tipografi rolü, her rolde `lineHeight` ve `letterSpacing`, en az üç
+  ayrık ağırlık ve üç ayrık boyut, boşluk/köşe/yükseklik ölçekleri, hareket süreleri
+  ve adı konmuş bir **imza bileşeni**. Reddedilirse sözleşme gerekçesiyle **bir kez**
+  düzeltme istenir; ikinci ret koşuyu düşürür — reddedilen `TASK_PLAN.json` ile
+  aynı ilke. Bütün ihlaller tek seferde bildirilir ki tek düzeltme turu hepsini
+  kapatabilsin.
+- **Font ailesi kayıt, ölçek sözleşmedir.** Ürün sözleşmesi INTERNET iznini
+  yasaklar, `google_fonts` yüzleri çalışma zamanında indirir ve agent sandbox'ının
+  ağı yoktur — yani hiçbir agent font dosyası edinemez. Bu yüzden `font_family`
+  *beyan edilmiş karar* olarak kaydedilir; zorlanan şey çevrimdışı gerçekten
+  ulaşılabilir olan ve algılanan kalitenin çoğunu taşıyan kısımdır: gerçek bir
+  boyut rampası, bilinçli satır yüksekliği, bilinçli harf aralığı ve birden çok ağırlık.
+- **Tasarım uyumu ölçülür, zorlanmaz** (`src/design-diagnostics.mjs`).
+  `DESIGN_REPORT.json`, sözleşmenin koda gerçekten yansıyıp yansımadığını sayar:
+  kullanılmayan yükseklik/hareket/köşe ölçeği, koda hiç değmemiş tipografi rampası,
+  tema dışına yazılmış sabit renk. **Kapı değildir ve hiçbir onarım turunu
+  beslemez** — gerekçe [LESSONS.md → 4](LESSONS.md).
 - **Cihaz testi kırılganlık taraması** (`src/integration-test-diagnostics.mjs`):
   metin girildikten sonra odak bırakılmadan/kaydırmadan yapılan varlık iddialarını
   bildirir. Kapı değildir; `DEVICE_REPORT.json` → `test_diagnostics` alanına yazılır
@@ -103,11 +163,14 @@ hangi tuzaklara düşülmüştür. Kronolojik değişiklik geçmişi için `git 
 
 | Kimlik | Ad | Durum | Ne kanıtlıyor |
 | --- | --- | --- | --- |
-| `1c30b97a4b89` | AboneCep | `failed` | İki Studio kusurunun birlikte yakalandığı vaka: kalite kapısı tek bir `info` lint'inde düştü ve üç onarım turunu harcadı, ardından her devam denemesi `pubspec` commit'inde git'in 1 koduyla öldü. İkisi de düzeltildi; **kayıt bilerek değiştirilmedi**, temiz bir koşu sonraki doğrulamadır |
+| `81cfde18afe2` | Seri Takip (2. koşu) | `awaiting_user_review` | Tasarım hattının ilk gerçek sınavı. `DESIGN_TOKENS.json` ilk denemede reddedildi (eksik `letterSpacing`), tek düzeltme turunda kabul edildi. Kalite PASS, cihaz 5/5 PASS, bütünlük `COMPLETE`, tasarım uyumu `APPLIED`. Reviewer 3 tur: imza öğesi eksikliği ve Review Repair'in bozduğu UTF-8 metni yakaladı, sonra AC1–AC11 PASS. 1.415.409 token |
+| `99c447beb0d8` | Sipariş Defteri | `awaiting_user_review` | Bugüne kadarki en zor spec: üç varlık (Ürün · Sipariş · Sipariş Kalemi), 13 değişmez, 12 kabul kriteri, atomik stok onay/iptal. Kalite PASS, cihaz 8/8 PASS, bütünlük `COMPLETE`, reviewer AC1–AC12 hepsi PASS. İki parçada ~1,82M token; Codex limiti ve review-repair kusuru bu koşuda bulundu |
+| `1c30b97a4b89` | AboneCep | `accepted` | Dört Studio kusurunun bulunup kapatıldığı vaka (info lint kapısı, pubspec commit'i, cihaz raporu commit'i, spec/toolchain API çelişkisi). Düzeltilmiş hatta yeniden koşuldu: 20 dk, 449k token, sekiz akış PASS, kullanıcı kabul etti |
 | `1d95246c0382` | Akış Cep | `awaiting_device_test` | Final kodda 47/47 kalite testi, 6/6 emülatör akışı ve yenilenmiş reviewer PASS. Kayıt, temizliğin kapı olduğu dönemde oluştu; **veritabanı durumu bilerek değiştirilmedi**. Aynı koşu güncel semantikte PASS üretir (aşağıya bakın) |
 | `7b6df59adcb9` | Ders Notu (2. koşu) | `awaiting_user_review` | Yeni sözleşmelerin ilk gerçek doğrulaması; tek incelemede temiz geçti |
 | `c67140223074` | Ders Notu (1. koşu) | `awaiting_user_review` | İlk tam uçtan uca başarı; cihaz kapısı PASS; feedback turu gerçek kusuru düzeltti |
 | `f87128fb48bf` | Bakım Takvimi | `interrupted` | Beş cihaz akışından dördü tamamlandıktan sonra Studio yeniden başlatıldığı için checkpoint'te durdu; son ölçümde 4973 MB boş alan vardı |
+| `d3441c561fed` | Seri Takip | `failed` | Rol bazlı ucuz model denemesinin ölçüldüğü koşu. 1.038.597 token harcandı, çalışan uygulama çıkmadı; ucuz `repair` üç turda var olmayan Flutter API'siyle uğraştı. Deneme reddedildi — [LESSONS.md → 1](LESSONS.md) |
 | `b9c53b9a14bf` | Stok Cep | `failed` | Eski cihaz koşusunda emülatör çevrimdışı kaldı ve prerelease `aapt` çöktü; kayıt güncel ortam sınıflandırmasından önce oluştu |
 | `a87cfbf38ea4` | Servis Cep | `awaiting_user_review` | Foreign-key kusurunun bulunduğu vaka; elle düzeltildi, cihaz koşusu yapılmadı |
 | `52ad9da29cd7`, `16fa069d6850`, `5a2c7dfb24a2` | Odak Mini, Odak Sayacı, Mini Kanban | eski | Cihaz kapısından önceki koşular; referans değeri sınırlı |
@@ -136,6 +199,33 @@ Spec v2 ayrıca özellik modülleri, iş kuralları, ekran durum matrisi, veri
 sözleşmeleri, ürün-özel tasarım DNA/tokenları ve test izlenebilirliğini zorunlu
 kılar. `complexity_tier` görev ölçeğini, `target_parallelism` ise validator'ın
 kabul edeceği minimum grafik genişliğini belirler. V1 spec'ler eski davranışı korur.
+
+### Tasarım sözleşmesi (`src/design-tokens.mjs`)
+
+`DESIGN_TOKENS.json` UX aşamasında üretilir ve `validateDesignTokens` ile
+doğrulanır. Sözleşmeyi karşılamayan çıktı **bir kez**, ihlallerin tamamı
+listelenerek geri gönderilir; ikinci ret koşuyu düşürür.
+
+- Dokuz zorunlu renk rolü: `surface`, `onSurface`, `surfaceVariant`,
+  `onSurfaceVariant`, `primary`, `onPrimary`, `error`, `onError`, `outline`.
+  Değerler `#RRGGBB` veya Flutter'ın `#AARRGGBB` biçiminde olmalıdır.
+- Beş kontrast çifti gerçek WCAG bağıl parlaklık hesabıyla denetlenir: okunan her
+  şey 4.5:1, `outline`/`surface` sınırı 3:1.
+- En az beş tipografi rolü; her rolde `size`, `weight`, `lineHeight` (1.0–2.0) ve
+  `letterSpacing` (−2…4). En az üç ayrık ağırlık ve üç ayrık boyut gerekir.
+- Boşluk, köşe ve yükseklik ölçekleri artan ve geçerli olmalıdır; yükseklikte 0
+  meşru bir kademedir ("her şey düz" bir tasarım kararıdır).
+- `signature_element.surfaces` imza öğesinin göründüğü **en az iki** ekranı sayar.
+  Koordinatör `DESIGN_TOKENS.json` okur ve bu listedeki her yüzeyi bir göreve
+  dağıtmak zorundadır. Zorlanan şey **beyan**dır; kodun imza öğesini "kullandığını"
+  saymak Goodhart'a açıktır, adı geçen bir widget eklemek ucuzdur.
+- `font_family` ve adı/açıklaması olan bir **imza bileşeni** beyan edilir.
+  Ailenin kendisi zorlanamaz — agent sandbox'ının ağı yok, `google_fonts` yüzleri
+  çalışma zamanında indirir ve ürün sözleşmesi INTERNET iznini yasaklar — bu yüzden
+  aile beyan, ölçek ise sözleşmedir.
+
+Uyum ayrıca ölçülür (`DESIGN_REPORT.json`) ama **kapı değildir**; gerekçe
+[LESSONS.md → 4](LESSONS.md).
 
 ### Görev planı sözleşmesi (`src/task-plan.mjs`)
 
@@ -236,10 +326,27 @@ ADB hazırlık, APK install, launch, logcat, screenshot ve UI dump komutları 12
 saniyelik ayrı timeout taşır. Takılan bir ADB işlemi ortak 10 dakikalık process
 sınırını tüketmeden environment arızası olarak `awaiting_device_test` durumuna döner.
 
-Kalite kapısındaki dördüncü çek `src/source-diagnostics.mjs`'tir: üretilen Dart
-kaynağında **boş catch bloğu** veya **hatayı ne inceleyen ne yeniden fırlatan**
-blok arar. Dize interpolasyonu kod sayılır (`log('kayıt: $error')` kabul edilir);
+**Ölçülen ama kapı olmayan üç tarama var** ve bu ayrım bilinçlidir:
+`src/app-completeness.mjs` (`APPLICATION_COMPLETENESS.json`),
+`src/integration-test-diagnostics.mjs` (`DEVICE_REPORT.json` → `test_diagnostics`)
+ve `src/design-diagnostics.mjs` (`DESIGN_REPORT.json`). Hiçbiri koşuyu düşürmez ve
+hiçbiri bir onarım turuna girdi olmaz. Gerekçe Goodhart: bir tamir ajanına "şu
+uyarıyı temizle" denseydi hat, ölçümü kapatmayı öğrenirdi — anlamsız bir gradient
+ekleyip tasarım uyarısını geçmek, gerçek bir tasarım yapmaktan ucuzdur. Bulgu
+insanın ve ekranı zaten yazan agent'ın önünde durur; sayı hedef hâline gelmez.
+
+Kalite kapısındaki dördüncü çek `src/source-diagnostics.mjs`'tir ve **iki** şey
+arar. Birincisi **boş catch bloğu** veya **hatayı ne inceleyen ne yeniden fırlatan**
+blok. Dize interpolasyonu kod sayılır (`log('kayıt: $error')` kabul edilir);
 `catch (_) { cleanup(); rethrow; }` de kabul edilir, çünkü hata korunur.
+
+İkincisi **bozuk metin kodlaması**: bir agent ASCII dışı metni çift kodladığında
+(`günlük` → `gÃ¼nlÃ¼k`, bayt düzeyinde `C3 83 C2 BC`) ortaya çıkan
+`[Â-Å][\u0080-¿]` deseni. Analyze, test, APK ve bütünlük taraması
+bunu göremez — mojibake geçerli Dart ve geçerli bir string'dir. Gerçek bir koşuda
+reviewer yakaladı ve bedeli **106.506 token** oldu. Bu da bloklar, çünkü çıktı
+kriteri tartışmasız: bir Dart kaynağında `Ã` + devam karakteri dizisi hiçbir zaman
+kasıtlı değildir.
 
 ## Bilinçli kararlar
 
@@ -271,6 +378,35 @@ Bunlar tartışıldı ve bilerek böyle bırakıldı. Değiştirmeden önce nede
 - **Teknik kapı ürün kabulü değildir.** Analyze/test/APK PASS, kritik akışların
   çalıştığını kanıtlamaz; cihaz kapısı bu yüzden hem ana hatta hem feedback
   turunda zorunludur.
+- **Reviewer her turda yeniden koşar ve bu zayıflatılmadı.** 29 Eylül'de ölçüldü:
+  kayıtlı **23 reviewer koşusunun hiçbiri** bir öncekiyle aynı HEAD'den
+  başlamamış (`agent_runs.checkpoint_commit`). Yani tekrar diye bir şey yok;
+  reviewer pahalı çünkü her tur gerçekten yeni koda bakıyor. Maliyet hedefi
+  onarım turu sayısı olmalı, inceleme sıklığı değil.
+- **Bütünlük taraması onarım döngüsüne bağlanmadı.** 11 üretilmiş depoda 13
+  bulgu, **0 yanlış pozitif** — ama reviewer'a ulaşan hiçbir koşu `INCOMPLETE`
+  değil; iki bulgu da başarısız/eski kayıtlardan. Bugün hiç tetiklenmeyecek bir
+  onarım turu ölü kod olur ve yanında Goodhart riski taşır. Gerçek bir koşu
+  `INCOMPLETE` verdiğinde yeniden değerlendirilir.
+- **Otomatik resume yapılmıyor.** Duraklama artık doğru etiketlense de kullanıcı
+  yokken devam etmek yeni bir token bütçesi penceresi açar; harcama kararı
+  bilinçli olarak insanda kalır.
+- **Eski örnek projeler yeniden üretilmiyor.** `Servis Cep` ve `Stok Cep`
+  referans kayıttır; güncel sözleşmeleri sınamak için yeni bir spec koşulur,
+  eski kayıt olduğu gibi bırakılır.
+- **Tasarım sözleşmesi zorlanır, tasarım uyumu zorlanmaz.** Kontrast ve tipografi
+  rampası mekanik olarak doğrulanabilir; "güzel mi" doğrulanamaz. Uyum taraması
+  bu yüzden kapı değildir: optimize edilebilen her ölçüm optimize edilir ve
+  ortaya çıkan şey iyi tasarım değil, ölçümü geçen tasarım olurdu.
+- **Tekrarlayan reviewer bulgusu mekanik kontrole çevrilir.** Bu bir kural, açık
+  iş değil. Sessiz `catch` için bir kez yapıldı (`source-diagnostics.mjs`) ve
+  reviewer'ı o konudan tamamen çıkardı: deterministik bir kontrol, her koşuda aynı
+  şeyi yargılayan bir agent turundan hem ucuz hem güvenilirdir. Aynı bulgu ikinci
+  kez görüldüğünde aynı yol izlenmelidir.
+- **Ucuz model rol bazında kullanılmıyor.** Yetenek kodda duruyor, `.env` boş.
+  Gerçek bir koşuda ölçüldü ve hattı böldü; ayrım "mekanik / yargı" değil
+  "bilgi gerektiren / gerektirmeyen" çıktı. Maliyet hedefi model kalitesi değil
+  **koşu sayısı** olmalı — [LESSONS.md → 1](LESSONS.md).
 - **Kurtarılabilir altyapı arızası koşuyu yok etmez.** Test sonrası temizlik,
   bozuk reviewer JSON'ı, kırılan Codex stdin pipe'ı ve yarım kalmış APK yedeği
   ürün kalitesi hakkında hiçbir şey söylemez; her biri ya uyarıya ya tek bir
@@ -300,9 +436,59 @@ reviewer kusurlarındandı. Builder paralelliği iki koşuda da aynı; plan söz
 paralelliği artırmadı, **garanti altına aldı** — önceki nesilde (`Stok Cep`) aynı
 tür plan x1.00'a düşüyordu.
 
+## Doğrulama kanıtı arşivi
+
+Tarihli ölçümler. Güncel test sayıları ve nasıl koşulacağı
+[README → Doğrulama](../README.md#doğrulama) içindedir; burada **ne zaman neyin
+kanıtlandığı** durur.
+
+**Son doğrulama kanıtı (23 Eylül 2026):** `npm run check` başarılı (17 modül); tam paket
+**163/163 PASS**. Yeni olan 8 test, gerçek bir koşuyu düşüren dört kusuru kapatır:
+path-scoped commit (ilgisiz kirli dosyayla, yeni dosyayla ve silme ile) ve analiz
+şiddet politikası. `flutter analyze` şiddet davranışı gerçek toolchain'de ölçüldü
+(Flutter 3.44.6): tek bir `use_null_aware_elements` info bulgusu bayraksız **1**,
+`--no-fatal-infos` ile **0** kodunda çıkar ve info her iki durumda da raporlanır.
+Düzeltme, koşuyu gerçekten düşüren depo durumuna karşı da doğrulandı: `AboneCep`
+(`1c30b97a4b89`) çalışma ağacında kirli `android/app/build.gradle.kts` dururken
+`pubspec` commit'i artık fırlatmıyor, `false` dönüyor ve depoyu değiştirmiyor.
+
+Aynı koşu iki kusur daha ortaya çıkardı ve ikisi de kapatıldı. Cihaz raporu
+commit'i, kapıların tamamı PASS olduğu hâlde Flutter'ın gradle migration'ını agent
+ihlali sanıp koşuyu düşürüyordu; artık path-scoped ve orchestrator testi bunu
+toolchain'in gate ortasında dosya yeniden yazdığı senaryoyla doğruluyor. Spec ise
+Flutter'ın desteklemediği bir Android API'si isteyebiliyordu; preflight bunu artık
+ilk agent'tan önce engel olarak raporluyor. Flutter 3.44.6'nın tabanı SDK
+kaynağından okundu: `minSdkVersionInt = 24`.
+
+**Önceki doğrulama kanıtı (10 Eylül 2026):** tam paket **155/155 PASS**. Yeni olan
+13 test uygulama bütünlüğü taramasını ve raporun hatta iliştirilmesini kapsar.
+
+**Önceki doğrulama kanıtı (9 Eylül 2026):** tam paket 142/142 PASS.
+Timeout/stability testleri 30 kez koşuldu, sıfır flake. `npm run test:minimal-live` uçtan uca PASS: tek gerçek
+Codex çağrısı, 33.592 giriş / 16.512 cache / 194 çıkış tokenı (**17.274
+faturalanabilir**), proje `accepted` durumuna ulaştı. Gerçek Windows toolchain'inde
+`flutter --version` asenkron yoldan 2465 ms sürdü ve bu süre boyunca event loop 235 kez
+tick attı.
+
+**Gerçek Flutter release kanıtı (9 Eylül 2026):** `Akış Cep` (`1d95246c0382`)
+üzerinde gerçek bir `flutter build apk --release` koşuldu. Sonuç `READY`: 98 saniye,
+`com.aimvpstudio.akiscep` · Akış Cep · 1.0.0+1, 55.838.362 baytlık APK,
+sha256 `b382a7a1…` (bağımsız olarak yeniden hesaplanıp doğrulandı), 0 engel,
+2 uyarı (`product_description` iskelet varsayılanı, `signing` debug anahtarı).
+Bu **gerçek toolchain kanıtıdır**; testlerdeki diğer release senaryoları enjekte
+edilmiş derlemelerle çalışan simülasyondur.
+
+**Gerçek üretilmiş uygulama kanıtı (10 Eylül 2026):** bütünlük değerlendiricisi `projects/`
+altındaki 10 üretilmiş repository'ye (186 üretim Dart dosyası) uygulandı. Sekizi
+`COMPLETE`; iki proje gerçek bir bulguyla `INCOMPLETE`: `1ddc9c6ed5ae` iskelet sayaç
+uygulamasını hâlâ `lib/main.dart` içinde taşıyor, `b9c53b9a14bf` (`Stok Cep`) hareket
+listesinde `onTap: () {}` ile hiçbir şey yapmayan bir satır içeriyor. Yanlış pozitif
+yok. Kayıtlı projelerin durumu ve Git geçmişi bu ölçüm için değiştirilmedi.
+
 ## Bilinen tuzaklar
 
-Bu oturumda gerçekten zaman kaybettiren şeyler:
+Bu oturumda gerçekten zaman kaybettiren şeyler. Kısa liste hâli
+[LESSONS.md](LESSONS.md) içindedir; burası **kanıtlı ayrıntı** kaydıdır.
 
 1. **Kod değişikliği sunucu yeniden başlatılmadan devreye girmez.** Node modülleri
    süreç başlangıcında yükler. Bir resume, kaynak düzeltildiği hâlde eski kodla
@@ -371,6 +557,14 @@ Bu oturumda gerçekten zaman kaybettiren şeyler:
    sayılıp onarım döngüsünü erken durdurabilirdi. Filtre artık analiz şiddet
    satırlarını da alıyor. `ROOT_CAUSE_REPORT.md` de iki farklı çıkışı ayırıyor:
    imza tekrarı ile tur üst sınırına ulaşma aynı cümleyle anlatılmıyor.
+12. **Kalıcı kayıt, araçların sahibi olduğu dizinde durmamalı.** `artifact_path`
+   `repository/build/app/outputs/flutter-apk/` altını gösteriyordu; oysa `build/`
+   Flutter'ın istediği anda sildiği bir cache. 29 Eylül temizliğinde `projects/`
+   24,6 GB'tan 1,56 GB'a indi ve bağlantıların kopmaması için dokuz APK'nın elle
+   taşınıp aynı yola geri konması gerekti. **Kapatıldı:** `preserveArtifact`
+   teslim APK'sını `projects/<id>/artifacts/` altına kopyalıyor, API
+   `artifact_available` hesaplıyor, panel bayat bağlantıyı gizliyor ve mevcut
+   dokuz kayıt taşındı. `build/` artık her proje için tamamen atılabilir.
 
 ## Maliyet koruması
 
@@ -399,29 +593,33 @@ Sekmeli, proje odaklı: **Genel · Çalışma · Doğrulama · Etkinlik**.
 Yoklama, görünen veri değişmedikçe yeniden çizim yapmaz; açık panel, taslak metin ve
 kaydırma konumu korunur. Olay uç noktası son 400 olayı döndürür.
 
-## Açık kalan işler
+## Henüz kanıtlanmamış olanlar
 
-1. **`Akış Cep` yeniden koşulmadı.** Güncel semantikte PASS üreteceği hem kayıtlı
-   rapordan hem canlı `wipeAvdAfterTest` ölçümünden doğrulandı, fakat veritabanı
-   durumu geçmişi bozmamak için `awaiting_device_test` bırakıldı. Panelden
-   "Cihaz testini yeniden dene" ile temiz bir sonuç alınabilir.
-2. **Review Repair ve önceki bulgu hafızası hâlâ gerçek koşuda tetiklenmedi.**
-   Plan ve kabul kriteri sözleşmeleri 2. koşuda doğrulandı, ancak reviewer ilk turda
-   PASS verdiği için onarım döngüsü ve geçmiş bulgu aktarımı çalışmadı. Bunlar yalnız
-   birim testleriyle korunuyor. Zorlanacak bir şey değil; bir koşu reviewer'ı
-   bloklarsa doğal olarak sınanır.
-3. **Eski örnek projeler yeni sözleşmelerin gerisinde.** `Servis Cep` kritik akış
-   sözleşmesinden önce üretildiği için `USER_FLOWS.json` ve `integration_test/`
-   içermez; cihaz kapısı `isRepairableDeviceFailure` kuralıyla hemen durur. Elle
-   akış eklemek yerine güncel spec'le yeniden üretmek doğru yol. `Stok Cep` eski
-   cihaz koşusunun başarısız kaydıdır; yeniden deneme öncesinde güncel ortam kapısı
-   ve stabil Android build-tools ile değerlendirilmelidir.
-4. **Bütünlük bulguları henüz onarılmıyor.** Ölçüm kullanıcıya kanıtla gösterilir;
-   bulguyu düzeltmek bugün kullanıcının kararıdır. Onarım döngüsüne bağlamadan önce
-   gerçek koşularda kaç bulgu çıktığı ve kaçının haklı olduğu görülmelidir.
-5. **Tekrarlayan reviewer bulgularını mekanik kontrole çevirmek** — bu bir kural,
-   açık iş değil. Sessiz `catch` için bir kez yapıldı ve reviewer'ı o konudan
-   tamamen çıkardı; aynı bulgu ikinci kez görüldüğünde aynı yol izlenmelidir.
+Açık işlerin listesi ve öncelik sırası **tek yerde**, [TODO.md](TODO.md)
+içindedir. Burada yalnız durum kaydı var: bugüne kadar **neyin kanıtı yok**.
+
+- **`signature_element.surfaces` sözleşmesi gerçek koşuda sınanmadı.** Alan
+  zorunlu hâle getirildi ve koordinatör prompt'una bağlandı, ama imza öğesinin
+  gerçekten her yüzeye konup konmadığı ancak bir sonraki koşuda görülecek.
+- **Mojibake kontrolü gerçek koşuda tetiklenmedi.** Ölçülen vakaya karşı
+  doğrulandı ve birim testleri her Türkçe harfi kapsıyor, fakat canlı bir
+  bozulmayı henüz yakalamadı.
+- **Reviewer'ın önceki bulgu hafızası tetiklenmedi.** Review Repair'in kendisi
+  tetiklendi ve ölçüldü: `Sipariş Defteri` koşusunda reviewer AC11'i FAIL verdi
+  (semantik renk tokenları ana ekranlarda uygulanmamıştı), Review Repair düzeltmeyi
+  yaptı ve bu sırada dört widget testini kırdı — kapıya onarım hakkı veren
+  `#settleQualityGate` düzeltmesi bu vakadan çıktı. Ama **ikinci reviewer turuna
+  geçen geçmiş bulgu aktarımı** çalışmadı; yalnız birim testleriyle korunuyor.
+  Zorlanacak bir şey değil; bir koşu reviewer'ı iki kez bloklarsa doğal olarak
+  sınanır.
+- **`Akış Cep` kaydı `awaiting_device_test` olarak duruyor ve öyle bırakılacak.**
+  Kayıtlı raporda üç ürün kontrolü de PASS; `WAITING` yalnız temizliğin kapı
+  sayıldığı dönemden geliyor ve o semantiğin değiştiği canlı `wipeAvdAfterTest`
+  ölçümüyle doğrulandı. Yeniden koşmak kapalı bir soruyu tekrar sormaktır; cihaz
+  kapısı güncel kodla zaten bir sonraki uçtan uca koşuda sınanacak.
+- **Yeni "uydurma API yazma" kuralının işe yarayıp yaramadığı ölçülmedi.** Prompt
+  kuralı deterministik garanti değildir; sonraki koşuda API kaynaklı analyzer
+  hatası sayısı düşmezse mekanik bir kontrole çevrilmelidir.
 
 ## Bilerek ertelenenler
 
@@ -549,62 +747,17 @@ imzalama/keystore otomasyonu, mağaza yükleme, store listing üretimi, dağıt�
 otomasyonu, analitik, crash reporting, faturalama, deney sözleşmeleri veya pazar
 deneyi panoları.
 
-## Repository haritası
+## Harita, ayarlar ve komutlar
 
-| Yol | Sorumluluk |
-| --- | --- |
-| `src/server.mjs` | HTTP API ve panel |
-| `src/orchestrator.mjs` | Pipeline, kapılar, onarım döngüleri, iskelet üretimi |
-| `src/codex-runner.mjs` | Codex süreci, timeout, JSONL olayları |
-| `src/async-process-runner.mjs` | Bütün harici süreçler: asenkron yürütme, deterministik timeout, process-tree sonlandırma |
-| `src/database.mjs` | SQLite; proje/görev/agent kayıtları ve durum sözleşmeleri |
-| `src/spec-validator.mjs` | Spec doğrulama, kritik akış ve kabul kriteri ayrıştırma |
-| `src/task-plan.mjs` | Plan sözleşmesi ve paralellik kuralları |
-| `src/task-scheduler.mjs`, `src/task-worktree.mjs` | Hazır görev seçimi ve path izolasyonu |
-| `src/quality-report.mjs` | Kalite raporu ve inceleme sözleşmesi |
-| `src/source-diagnostics.mjs` | Üretilen Dart kaynağında sessiz hata yutma taraması |
-| `src/device-tester.mjs` | Cihaz kapısı, arıza sınıflandırması, imza |
-| `src/release-readiness.mjs` | Deterministik release hazırlık değerlendirmesi ve raporu |
-| `src/app-completeness.mjs` | Üretilen uygulamada tamamlanmamışlık izlerinin deterministik taraması |
-| `src/android-environment.mjs` | Emülatör başlatma, açılış bekleme, build-tools sağlığı |
-| `src/context-packager.mjs` | Rol bazlı context paketleri |
-| `src/mvp_studio/static/index.html` | Panel |
+Tekrar tutulmaz; tek kaynakları:
 
-## Ayarlar
-
-Tümü `.env.example` içinde. Eşzamanlılık üç ayrı sınırla yönetilir:
-`MVP_STUDIO_MAX_CONCURRENT_RUNS` (proje), `MVP_STUDIO_MAX_PARALLEL_BUILDERS`
-(proje içi builder), `MVP_STUDIO_MAX_CONCURRENT_AGENTS` (tüm sistemdeki Codex
-süreci — diğer ikisinin çarpımını sınırlayan üst kapı). Tek Codex çağrısının süre
-sınırı `MVP_STUDIO_CODEX_TIMEOUT_MS` (varsayılan 60 dakika), bir çalışmanın token
-sınırı `MVP_STUDIO_PROJECT_TOKEN_BUDGET` (varsayılan 1.500.000, 0 = sınırsız).
-Flutter/Gradle komut sınırı `MVP_STUDIO_FLUTTER_TIMEOUT_MS` ile belirlenir
-(varsayılan 10 dakika).
-Varsayılan proje içi builder sınırı 4, sistem genelindeki agent sınırı 5'tir.
-
-## Hızlı komutlar
-
-```powershell
-cd C:\Users\efeklc\Documents\GitHub\ai-mvp-studio
-npm start
-npm run check
-npm test
-```
-
-Sunucuyu durdurmak için çalışan terminalde `Ctrl+C` kullanın. `src/*.mjs`
-değiştikten sonra sunucuyu **yeniden başlatın**.
-
-
-### Proje sekmeleri ve bilgi hiyerarşisi
-
-**Genel · Çalışma · Doğrulama · Etkinlik**. Genel durum, önerilen eylem ve dört
-proje ölçümünü özetler; kanıt bağlantısı Doğrulama sekmesine açılır. Çalışma,
-eski Agentlar içeriğini ve Pipeline görev ayrıntıları/yeniden deneme eylemlerini
-korur. Doğrulama sırası: özet, kalite, cihaz ürün kontrolleri, kabul kriterleri,
-uygulama bütünlüğü, release hazırlığı ve ortam/temizlik. Kanıtlar, komut çıktıları, senaryolar,
-SHA-256, imza ve manifest bilgileri açılır bölümlerde bulunur.
-
-Kayıtlı cihaz kapısı durumu değiştirilmez; ürün kontrolleri ile temizlik ayrı
-gösterilir. READY yalnız sideload testi anlamındadır. Kriter metni API'de
-yoksa yalnız kimlik/durum gösterilir; kanıt açılarak okunur. Çalışma içeriğinin
-yeniden tasarımı sonraki adıma bırakılmıştır. API ve proje durumları değişmedi.
+- Repository haritası (hangi modül neyi yapar):
+  [README → Repository haritası](../README.md#repository-haritası)
+- Ortam değişkenleri ve eşzamanlılık sınırları: [.env.example](../.env.example),
+  özet [README → Çalıştırma](../README.md#çalıştırma)
+- Kurulum, çalıştırma ve doğrulama komutları:
+  [README → Çalıştırma](../README.md#çalıştırma) ve
+  [README → Doğrulama](../README.md#doğrulama)
+- Panel sekmeleri ve bilgi hiyerarşisi:
+  [UI_DESIGN_SYSTEM.md](UI_DESIGN_SYSTEM.md) §12–§15
+- Aşama ve kapı ayrıntıları: [PIPELINE.md](PIPELINE.md)

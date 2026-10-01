@@ -1,89 +1,52 @@
 # AI MVP Studio — TODO
 
-Son güncelleme: 23 Eylül 2026
+Son güncelleme: 2 Ekim 2026
 
-Son tam kontrol: `npm run check` başarılı, `npm test` **196/196 PASS**.
+Son tam kontrol: `npm run check` başarılı, `npm test` **235/235 PASS**.
 `npm run test:minimal-live` gerçek Codex ile uçtan uca geçiyor (tek canlı çağrı).
 Release hazırlığı gerçek Flutter toolchain'inde `Akış Cep` üzerinde `READY` üretti.
-Uygulama bütünlüğü değerlendiricisi 10 üretilmiş repository üzerinde koşuldu:
-8 `COMPLETE`, 2 gerçek bulguyla `INCOMPLETE`, yanlış pozitif yok.
+
+**Son uçtan uca kanıt (1 Ekim 2026):** `Seri Takip` (`81cfde18afe2`) tasarım
+hattının ilk gerçek sınavıydı. Kalite PASS, cihaz 5/5 PASS, bütünlük `COMPLETE`,
+tasarım uyumu `APPLIED`, reviewer AC1–AC11 hepsi PASS, 1.415.409 token. Uygulama
+LDPlayer'da elle de çalıştırıldı. Öncesinde `AboneCep` ve `Sipariş Defteri` de
+`awaiting_user_review`'a ulaşmıştı; `AboneCep` ardından `accepted`.
 
 Bu dosya **kalan işi** tutar. Kapanmış maddelerin gerekçeleri ve tasarım kararları
 [PROJECT_STATUS.md](PROJECT_STATUS.md) içindeki sözleşme ve "Bilinçli kararlar"
-bölümlerine taşınmıştır; tam metinleri `git log` içindedir.
+bölümlerine taşınmıştır; tam metinleri `git log` içindedir. Denenip **başarısız
+olan** yaklaşımlar ve tekrar edilmemesi gereken hatalar
+[LESSONS.md](LESSONS.md) içindedir — yeni bir madde açmadan önce oraya bakın.
 
 ## Açık işler
 
-Öncelik sırasında. Bir madde kapandığında regresyon testi eklenmeli,
-`npm run check` ve `npm test` çalıştırılmalı, ardından `PROJECT_STATUS.md`
-güncellenmelidir.
+**Şu an açık iş yok.** Hattın bilinen kusurları kapandı; sıradaki yön bir sonraki
+dilimi seçmektir, bkz. [Planlanan yön](#planlanan-yön-henüz-uygulanmadı).
 
-### 1. `Akış Cep` cihaz kapısını güncel semantikte yeniden koş
+Yeni bir madde açarken: önce [LESSONS.md](LESSONS.md), çünkü denenip reddedilmiş
+yaklaşımlar orada. Madde kapanırken regresyon testi eklenmeli, `npm run check` ve
+`npm test` çalıştırılmalı, ardından `PROJECT_STATUS.md` güncellenmelidir.
 
-- [ ] Panelden "Cihaz testini yeniden dene" ile projeyi devam ettir.
-- [ ] Sonucun PASS olduğunu ve `housekeeping.avd_reset` alanının `SKIPPED`
-  raporlandığını doğrula (hedef AVD değil; ayrıca boş alan eşiğin üstünde).
+## Maliyet dağılımı (ölçüm)
 
-**Bulgu:** kayıt, temizliğin kapı sayıldığı dönemde WAITING olarak oluştu ve
-geçmişi bozmamak için **bilerek değiştirilmedi**. Güncel semantikte PASS üreteceği
-hem kayıtlı rapordan hem canlı `wipeAvdAfterTest` ölçümünden doğrulandı.
+Açık iş değil, yukarıdaki maddelerin dayanağı. 25–26 Eylül 2026 tarihli iki
+koşunun rol bazlı dağılımı:
 
-### 2. Eski örnek projeleri güncel sözleşmelerle yeniden üret
+| Rol | Faturalanabilir | Pay | Koşu |
+| --- | --- | --- | --- |
+| `flutter_builder` | 695.306 | %31 | 5 |
+| `reviewer` | 590.738 | %26 | **6** |
+| `repair` | 312.861 | %14 | 5 |
+| `device_repair` | 255.700 | %11 | 4 |
+| `integration` | 114.864 | %5 | 1 |
+| `coordinator` | 79.967 | %4 | 1 |
+| planlama (4 agent) | 185.384 | %8 | 4 |
+| `review_repair` | 38.256 | %2 | 2 |
+| **toplam** | **2.273.076** | | |
 
-- [ ] `Servis Cep` — kritik akış sözleşmesinden önce üretildi; `USER_FLOWS.json` ve
-  `integration_test/` içermiyor, cihaz kapısı `isRepairableDeviceFailure` ile hemen
-  duruyor. Elle akış eklemek yerine güncel spec'le yeniden üretilmeli.
-- [ ] `Stok Cep` — eski cihaz koşusunun başarısız kaydı; yeniden denemeden önce
-  güncel ortam kapısı ve stabil Android build-tools ile değerlendirilmeli.
-
-### 3. Bütünlük ölçümünü gerçek bir koşuda gör ve sonraki dilime karar ver
-
-- [ ] Yeni bir koşuda `APPLICATION_COMPLETENESS.json` üretildiğini ve panelin
-  Doğrulama sekmesinde göründüğünü doğrula.
-- [ ] Çıkan bulguların kaçının haklı olduğunu not et; onarım döngüsüne bağlamak
-  ancak bundan sonra tartışılmalı.
-
-Bugün ölçüm bir kapı değil: proje durumunu ve kapı sonuçlarını değiştirmiyor,
-otomatik onarım tetiklemiyor. Sıradaki aday dilim, ekran durumları
-(yükleniyor/boş/hata) ve ölü uçlu navigasyon gibi kategorilerin **deterministik**
-olarak ölçülebilen kısmı; bugünkü kapsam dışı listesi
-[PROJECT_STATUS.md → Uygulama bütünlüğü](PROJECT_STATUS.md#uygulama-bütünlüğü)
-içindedir.
-
-### 4. Review Repair'i gerçek bir koşuda gör
-
-- [ ] Reviewer'ı bloklayan bir koşuda onarım döngüsünün ve geçmiş bulgu
-  aktarımının çalıştığını doğrula.
-
-Zorlanacak bir şey değil; şu an yalnız birim testleriyle korunuyor. Bir koşu
-reviewer'ı bloklarsa doğal olarak sınanır.
-
-### 5. Rol bazlı model / reasoning effort seçimi
-
-İleriye dönük; bugün bir arızayı kapatmıyor, maliyet ve kalite kaldıracı olarak
-isteniyor. İki yarısı var ve **ilki tek başına da değerli**:
-
-- [ ] **Teşhis yarısı (ucuz).** `agent_runs` tablosuna kullanılan model ve
-  reasoning effort yazılsın. Bugün bu bilgi Studio'da hiç tutulmuyor; bir koşunun
-  hangi modelle üretildiği ancak `thread_id` üzerinden Codex oturum kaydından
-  (`~/.codex/sessions/.../rollout-*.jsonl`, `turn_context` olayı) geriye dönük
-  okunabiliyor. Token kullanımı zaten kaydediliyor; modelsiz token sayısı
-  maliyet kıyaslaması için yetersiz.
-- [ ] **Seçim yarısı.** Rol başına model/effort ataması (`config.mjs` üzerinden
-  varsayılan + ortam değişkeni), `codex-runner` çağrısında `-c model=…` /
-  `-c model_reasoning_effort=…` olarak geçirilsin. Aday ayrım: Coordinator ve
-  Reviewer yargı ağırlıklı, Integration ve Repair daha mekanik.
-- [ ] Ataması olmayan rol bugünkü davranışı korusun: bayrak geçilmez, model
-  Codex yapılandırmasından gelir.
-
-**Bugünkü durum (23 Eylül 2026 ölçümü):** Studio model seçmiyor. `codex-runner.mjs`
-çağrıyı `exec --json --sandbox workspace-write -` olarak kuruyor; `src/` genelinde
-`--model` geçmiyor. Dolayısıyla bütün roller — planlama, builder, integration,
-repair, reviewer — `~/.codex/config.toml` içindeki tek ayarı paylaşıyor. Çalışan
-bir Repair Agent'ın oturum kaydından okunan değerler: `model = "gpt-5.6-sol"`,
-`effort = "medium"`, Codex CLI `0.153.4`. Bu, modelin **Studio dışından sessizce
-değişebileceği** anlamına da gelir: `config.toml` değişirse Studio'da hiçbir şey
-değişmeden sonraki koşu başka bir modelle çalışır.
+Okunuşu: **onarım döngüleri + tekrarlanan inceleme %53.** İlk geçiş üretimi
+(builder + planlama) yalnız %39. Yani maliyet uygulama *yazmakta* değil, yazılanı
+**doğrulamak ve düzeltmekte**.
 
 ## Bilerek ertelenenler
 
@@ -98,7 +61,29 @@ iyileştirmiyorlar. Ayrıntı ve gerekçeler
 - HTTP katmanının test kapsamı yok; `createServer` import anında `listen` çağırıyor.
 - `analyze` ve `test` paralelleştirilmedi (ölçülen kazanç ~2 saniye).
 
-## Planlanan yön — henüz uygulanmadı
+Aşağıdaki üçü **karar**, iş değil — açık iş listesinden bu yüzden çıkarıldı:
+
+- **`Akış Cep` yeniden koşulmayacak.** Kapalı bir soruyu üçüncü kez sormak olurdu:
+  kayıtlı raporda üç ürün kontrolü de (`flow_coverage`, `apk_install`, `launch`)
+  zaten **PASS**; `WAITING` yalnız temizliğin kapı sayıldığı dönemden geliyor ve
+  o semantiğin değiştiği canlı `wipeAvdAfterTest` ölçümüyle ayrıca doğrulandı.
+  Üstelik **yeni bir uçtan uca koşu cihaz kapısını güncel kodla zaten çalıştırır**
+  — hem de bu kez agent'ların yeni yazdığı bir uygulamayla, yani daha zor
+  koşulda. Kayıt geçmişi bozmamak için `awaiting_device_test` bırakıldı.
+
+- **Otomatik resume yapılmayacak.** Codex duraklaması artık `paused_usage` olarak
+  doğru etiketleniyor, ama "limit açılınca kendiliğinden devam et" kullanıcı
+  yokken para harcar. Devam ettirmek yeni bir token bütçesi penceresi açar ve
+  bu, [PROJECT_STATUS.md](PROJECT_STATUS.md) tanımıyla *bilerek verilmiş bir
+  harcama kararıdır*. Yapılacaksa yalnız opt-in ve açık bütçe sınırıyla.
+- **Eski örnek projeler yeniden üretilmeyecek.** `Servis Cep` kritik akış
+  sözleşmesinden önce üretildi (`USER_FLOWS.json` ve `integration_test/` yok,
+  cihaz kapısı hemen duruyor), `Stok Cep` eski bir cihaz koşusunun başarısız
+  kaydı. İkisi de **referans kayıt**; üretim maliyeti ödemeye değmiyor ve bu
+  kullanıcının verdiği bir karardır. Yeni bir sözleşme sınanacaksa yeni bir spec
+  koşulur, eski kayıt olduğu gibi bırakılır.
+
+## Planlanan yön (henüz uygulanmadı)
 
 Yayınlanabilirlik artık ölçülüyor; **yayınlama hâlâ yapılmıyor.** Sıradaki adımlar,
 değer sırasıyla:
@@ -118,6 +103,165 @@ crash reporting, faturalama, deney sözleşmeleri, pazar deneyi panoları.
 
 Tam gerekçeler için `git log`; sözleşme hâline gelenler `PROJECT_STATUS.md` içinde.
 
+**Bozuk metin kodlaması artık kapıda yakalanıyor (2 Ekim 2026)**
+
+- `findBrokenEncoding` kaynak teşhis taramasına eklendi ve kalite kapısının
+  dördüncü çekine bağlandı: bulgu **bloklar**, uyarı değildir.
+- Desen `[Â-Å][\u0080-¿]` — iki baytlık bir UTF-8 dizisinin lead
+  baytı ve devam baytı, Latin-1 olarak okunmuş hâli. İkinci karakterin aralığı
+  gerçek hiçbir kelimede büyük harften sonra gelmez, bu yüzden yanlış pozitifi yok.
+- Satır başına tek bulgu: bozulan bir kelime deseni çoğu zaman iki kez tetikler.
+- Regresyon: `ü ı ş ğ ç ö İ Ş Ğ Ç Ö Ü` harflerinin her biri için hem bozuk hâlin
+  yakalandığı hem doğru hâlin temiz geçtiği doğrulanıyor; ayrıca bozuk bir dosyanın
+  `runSourceDiagnostics` çıktısını FAIL yaptığı.
+
+**Neden kapı:** çıktı kriteri tartışmasız. Ölçülen bedel 106.506 token'dı ve
+görünür olması şanstı — reviewer'ın okumadığı bir dosyada olsa kullanıcıya giderdi.
+Gerekçe [LESSONS.md → 14](LESSONS.md).
+
+**İmza öğesinin yüzeyleri sözleşmeye girdi (2 Ekim 2026)**
+
+- `signature_element.surfaces` zorunlu: en az iki yüzey, boş girdi kabul edilmiyor,
+  değerler kırpılarak saklanıyor.
+- UX prompt'u alanı ve gerekçesini taşıyor; koordinatör prompt'u artık
+  `DESIGN_TOKENS.json` okuyor ve listedeki her yüzeyi bir göreve dağıtmak zorunda.
+- Mobil şablonun "Görsel Zenginlik" bölümü en az iki yüzey saymayı istiyor.
+- Regresyon: eksik, tek elemanlı, dizi olmayan ve boş girdili `surfaces` reddediliyor.
+
+**Neden sayım değil beyan:** kodun imza öğesini "kullandığını" saymak Goodhart'a
+açıktır — adı geçen bir widget eklemek ucuzdur. Zorlanan şey sözleşmenin eksiksiz
+beyan edilmesi, kullanımın ölçülmesi değil ([LESSONS.md → 4](LESSONS.md)).
+
+**Etki:** sözleşmesinde `surfaces` olmayan eski bir proje devam ettirilirse
+`#settleDesignTokens` onu reddeder ve bir düzeltme turu harcar. Bu bilinçli:
+sözleşme sessizce gevşetilmez.
+
+**Tasarım hattı gerçek koşuda sınandı (1 Ekim 2026)**
+
+`Seri Takip` aynı spec'le ikinci kez koşuldu (`81cfde18afe2`); tek değişen hat.
+Sonuç `awaiting_user_review`, AC1–AC11 hepsi PASS, 1.415.409 token.
+
+- **Sözleşme iş gördü.** UX agent'ı ilk denemede tipografi rollerine
+  `letterSpacing` yazmamıştı; sözleşme **bütün ihlalleri tek seferde** bildirdi ve
+  agent tek düzeltme turunda (56 sn) hepsini kapattı. Sözleşme olmasaydı tipografi
+  rampası yarım çıkar ve kimse fark etmezdi.
+- **Ölçülen getiri çizimde:** çizim/gradient 2 → 7. Kabul edilmiş iki uygulamada
+  bu sayı sıfırdı. Tipografi yoğunluğu dosya başına 0,44 → 0,63.
+- `DESIGN_REPORT.json` durumu **`APPLIED`**, sıfır uyarı. Tam tablo
+  [PROJECT_STATUS.md → Nerede duruyoruz](PROJECT_STATUS.md).
+- **Yan ürün olarak ilk kez gerçek koşuda görüldü:** Review Repair tetiklendi ve
+  kendi kırdığını onardı; cihaz kapısı devam ettirme sonrası üç kez koştu, üçü de
+  PASS; artefakt `build/` dışına ilk koşudan itibaren yazıldı; checkpoint'ten
+  devam tamamlanmış on görevi yeniden koşmadı.
+
+**Tarama kendi yanlış pozitifini üretti — düzeltildi (2 Ekim 2026)**
+
+Koşu önce `DRIFT` raporladı: 12 "tema dışı sabit renk". Hepsi yanlıştı.
+
+- `COLOR_LITERAL` regex'indeki tek `i` bayrağı hem hex rakamlarını hem `Colors`
+  **adını** büyük/küçük harf duyarsız yapıyordu. Tema uzantısının yerel değişkeni
+  `colors` olduğu için `colors.orman` sızıntı sayıldı — yani **doğru desen
+  cezalandırıldı**.
+- Düzeltme: hex için `0[xX][0-9a-fA-F]`, tanımlayıcı için harf duyarlı `Colors\.`.
+- Düzeltmeden sonra: `Seri Takip` her iki koşuda da **0** sabit renk, rapor
+  `APPLIED`. Eski ölçümlerdeki sabit renk sayıları da buna göre düzeltildi.
+- Regresyon testi: tema uzantısından renk okumak sızıntı sayılmaz.
+
+**Ders:** bir tarama yalnız yanlış pozitif üretmekle kalmaz, **doğru olanı yanlış
+gösterebilir.** Kapı olmaması bu kez işe yaradı — kapı olsaydı hat, tema
+uzantısını terk edip literal yazmaya geri dönerek "düzelmiş" olurdu.
+
+**Reviewer gereksiz koşmuyor — ÖLÇÜLDÜ, BULGU YOK (29 Eylül 2026)**
+
+Ölçüm için kod eklemeye gerek olmadığı görüldü: `agent_runs.checkpoint_commit`
+zaten her agent koşusunun başladığı HEAD'i tutuyor.
+
+- Kayıtlı **23 reviewer koşusunun tamamı** farklı bir HEAD'den başlamış.
+- Ardışık iki koşunun aynı commit'e bakması **hiç olmamış** (0 koşu, 0 token).
+
+Yani reviewer'ın pahalı olması tekrar değil, **her turun gerçekten yeni koda
+bakması**. Maliyet düşürülecekse hedef onarım turu sayısı olmalı. Madde kapandı,
+kod değişmedi — ölçmeden önce kod yazılsaydı boşa giderdi.
+
+**Kalıcı artefaktlar `build/` dışına taşındı (29 Eylül 2026)**
+
+- `preserveArtifact` teslim APK'sını `projects/<id>/artifacts/` altına kopyalıyor;
+  `artifact_path` artık o kopyayı gösteriyor. Kopya depo **dışında**, böylece
+  bir agent'ın commit edilmemiş değişikliği sanılamaz.
+- Kopyalama başarısızsa kaynak yol döndürülüyor: bitmiş bir koşu bir dosya
+  kopyası yüzünden kaybedilmez.
+- API `artifact_available` alanını hesaplıyor (dosya gerçekten var mı) ve panel
+  bağlantıyı yalnız o zaman gösteriyor — bayat kayıt 404 vermek yerine gizleniyor.
+- İndirme ucunun kapsama kontrolü depo yerine **proje dizinine** göre yapılıyor;
+  hem yeni hem eski kayıtlar çalışıyor.
+- Mevcut 9 kayıt yeni konuma taşındı ve satırları güncellendi. `build/` artık
+  her proje için tamamen atılabilir.
+- Regresyon: iki test — kopyanın `build/` silindikten sonra da durduğu, ve
+  kaynak yokken koşunun yol kaybetmediği.
+
+**Kod yazan rollere "var olmayan API uydurma" kuralı (29 Eylül 2026)**
+
+`Seri Takip` koşusunu düşüren hata sınıfı buydu: `SemanticsFlags.hasFlag` ve
+`SemanticsNode.actions` — ikisi de yok. Uydurulmuş API yazıldığı yerde değil,
+üç aşama sonra analyzer'da patlıyor; repair de aynı yüzeyi bilmediği için tahmin
+ediyor.
+
+- Kural, tek tek prompt'lara değil **ortak ekin** üstüne kondu: `flutter_builder`,
+  `integration`, `test_strategy`, `device_repair`, `repair`, `review_repair`.
+  Builder kadar repair'in de taşıması şart, çünkü asıl tur orada yanıyordu.
+- Regresyon testi kuralın ekte olduğunu ve altı rolü de kapsadığını doğruluyor.
+- **Ölçülecek:** sonraki koşuda API kaynaklı analyzer hatası sayısı. Prompt kuralı
+  deterministik garanti değil; işe yaramazsa mekanik kontrole çevrilmeli.
+
+**Bütünlük bulguları ölçüldü, onarıma bağlanmadı (29 Eylül 2026)**
+
+11 üretilmiş depo tarandı:
+
+- 9 depo `COMPLETE`, 2 depo `INCOMPLETE`, toplam 13 bulgu.
+- **0 yanlış pozitif.** İkisi de elle doğrulandı: `1ddc9c6ed5ae` hâlâ Flutter demo
+  sayaç iskeletini taşıyor, `b9c53b9a14bf` hareket satırında `onTap: () {}` ile
+  hiçbir şey yapmıyor.
+- Kritik gözlem: **reviewer'a ulaşan hiçbir koşu `INCOMPLETE` değil.** İki bulgu
+  da başarısız/eski kayıtlardan geliyor.
+
+Bu yüzden onarım döngüsüne bağlanmadı: bugün hiç tetiklenmeyecek bir tur, ölü
+kod olur ve yanında Goodhart riski taşır ([LESSONS.md → 4](LESSONS.md)). Tarama
+ölçmeye ve kanıtı kullanıcıya göstermeye devam ediyor. Gerçek bir koşu
+`INCOMPLETE` verdiğinde madde yeniden açılmalı.
+
+
+**Tasarım hattı — sözleşme, prompt ve ölçüm (29 Eylül 2026)**
+
+Üç kaldıraç birlikte uygulandı. **Henüz gerçek bir koşuda sınanmadı** — bkz.
+açık iş 1.
+
+- `src/design-tokens.mjs`: `DESIGN_TOKENS.json` sözleşmesi. Dokuz renk rolü, beş
+  kontrast çifti (gerçek WCAG bağıl parlaklık hesabı, Flutter'ın `#AARRGGBB`
+  biçimi dahil), en az beş tipografi rolü, her rolde `lineHeight`/`letterSpacing`,
+  en az üç ayrık ağırlık ve boyut, artan ölçekler, imza bileşeni. İhlallerin
+  **tamamı tek seferde** bildirilir ki tek düzeltme turu hepsini kapatabilsin.
+- UX agent'ı artık iki artefakt üretiyor; sözleşme reddedilirse gerekçesiyle bir
+  kez düzeltme isteniyor (`#settleDesignTokens`), ikinci ret koşuyu düşürüyor.
+- `src/design-diagnostics.mjs`: `DESIGN_REPORT.json`. Sözleşmenin koda yansıyıp
+  yansımadığını sayar; yorum ve string'ler `maskNonCode` ile ayıklanır, üretilmiş
+  dosyalar (`*.g.dart`, `*.freezed.dart`) taranmaz, tema dizinindeki renk
+  literalleri meşru sayılır. **Kapı değil, onarım girdisi değil** — gerekçe
+  [LESSONS.md → 4](LESSONS.md).
+- Yükseklik ölçeğinde `0` meşru kademedir; "her şey düz" bir tasarım kararıdır ve
+  `depth_unused` yalnız sözleşme derinlik vaat ettiğinde tetiklenir.
+
+**Depo temizliği ve belge düzeni (29 Eylül 2026)**
+
+- `projects/` 24,6 GB → 1,56 GB. Yalnız yeniden üretilebilir cache'ler silindi;
+  `projects.artifact_path`'in işaret ettiği dokuz APK taşınıp aynı yola geri
+  kondu, kaynak/`.git`/worktree/`data` dokunulmadı. Çıkan ders ve kalıcı düzeltme:
+  [LESSONS.md → 12](LESSONS.md) ve açık iş 5.
+- README 48,7 → 20,5 KB. Hat ayrıntısı `PIPELINE.md`'ye, tarihli doğrulama
+  kanıtları `PROJECT_STATUS.md`'ye taşındı; repository haritası, ayarlar, komutlar
+  ve panel hiyerarşisi tek kaynağa indirildi. README'ye **Belge haritası** ve
+  yeni oturum için tek prompt eklendi. `LESSONS.md` açıldı ve `AGENTS.md`
+  başlangıç okuma listesine girdi.
+
 **Koşuyu düşüren Studio kusurları (son artış)**
 
 - Orchestrator rapor commit'leri path-scoped (`commitPaths`): dar `git add` ile
@@ -136,6 +280,83 @@ Tam gerekçeler için `git log`; sözleşme hâline gelenler `PROJECT_STATUS.md`
   taban Flutter SDK kaynağından okunuyor, okunamazsa `SKIPPED`.
 - Mobil template varsayılanı `min_android_sdk: "24"`; önceki `"23"` her yeni
   spec'e karşılanamaz bir gereksinim kopyalıyordu.
+
+**Bütünlük ölçümü ve Review Repair gerçek koşularda görüldü (25–26 Eylül 2026)**
+
+İkisi de açık madde olarak duruyordu; iki uçtan uca koşu ikisini de karşıladı.
+
+- **Uygulama bütünlüğü:** `AboneCep` ve `Sipariş Defteri` koşularının ikisinde de
+  `APPLICATION_COMPLETENESS.json` üretildi ve **`COMPLETE`** çıktı (0 blocker,
+  0 uyarı). Panelin Doğrulama sekmesinde görünüyor. Ölçüm kapı değil, durumu
+  değiştirmedi.
+- **Review Repair:** iki kez gerçek koşuda çalıştı. `AboneCep`'te üretilen
+  README hâlâ "API 23" diyordu; `Sipariş Defteri`'nde AC11 (semantik renk
+  tokenları ana ekranlarda uygulanmamış) blokladı. İkisinde de bulgu kapandı ve
+  reviewer sonraki turda PASS verdi.
+- Yan kazanç: bu yolda **gerçek bir kusur bulundu ve kapatıldı** — review
+  repair'in kendi düzeltmesiyle kalite kapısını kırması hâlinde koşu hiç onarım
+  hakkı olmadan ölüyordu. Ayrıntı aşağıda.
+
+**Sonraki dilim kararı:** bütünlük taramasının görsel/anlamsal tarafı (ölü uçlu
+navigasyon, eksik yükleniyor/boş/hata durumu) hâlâ kapsam dışı ve iki koşuda da
+bir ihtiyaç doğurmadı — iki uygulama da `COMPLETE` çıktı. Bu yüzden öncelik
+maliyet hattına verildi; bütünlüğün genişletilmesi için önce bir koşunun bunu
+gerektirmesi beklenecek.
+
+**Ucuz model denemesi — ÖLÇÜLDÜ VE REDDEDİLDİ (26 Eylül 2026)**
+
+Rol bazlı model seçimi `Seri Takip` koşusunda gerçek veriyle denendi. Sonuç:
+**maliyet için ucuz modele geçmeyin.** `.env` boş bırakıldı; yetenek kodda
+duruyor ama varsayılan kullanım değil.
+
+Denenen: `repair`, `device_repair`, `integration`, `review_repair` →
+`gpt-5.6-luna:low` ("Fast and affordable agentic coding model"). Diğerleri
+varsayılanda (`gpt-5.6-sol:medium`).
+
+| Rol | Model | Sonuç |
+| --- | --- | --- |
+| Integration | `luna:low` | **İyi** — 144 sn / 82.842 token (`sol` ile 379 sn / 114.864). %28 daha az token, 2,6× hızlı, çıktısı sorunsuz |
+| Repair | `luna:low` | **Hattı böldü** — 3 tur, 156.355 token, kapı geçilemedi, proje `failed` |
+
+Koşu 1.038.597 token harcadı ve çalışan uygulama üretmedi.
+
+**Neden.** Kalan üç hata builder'ların (`sol:medium`) yazdığı widget testlerindeydi
+ve hepsi var olmayan Flutter API'siydi: `SemanticsFlags.hasFlag`,
+`SemanticsNode.actions`. Ucuz repair üç turda üç kez dosyaya dokundu, her turda
+imza değişti (yani bir şey denedi) ama gerçek API'yi bilmediği için hep yanlış
+tahmin etti. Erken durma bile tetiklenmedi.
+
+**Ayrım "mekanik / yargı" değil, "bilgi gerektiren / gerektirmeyen".**
+Integration mevcut kodu okuyup taşır — ucuz model yapabiliyor. Repair *"bu Flutter
+sürümünde doğru API ne?"* sorusunu cevaplamak zorunda; bu bilgi işidir. Önceki
+maliyet tablosundan çıkarılan "mekanik roller ucuza alınabilir" hipotezi yanlıştı.
+
+**Kalan tek aday:** `integration=gpt-5.6-luna:low`. Ölçülmüş tek kazanç bu, ama
+tek başına toplamın %5'i olduğu için kurcalamaya değmez. Bilinçli olarak
+kullanılmıyor.
+
+**Rol bazlı model seçimi (26 Eylül 2026)**
+
+- `MVP_STUDIO_AGENT_MODELS` ile rol başına model ve reasoning effort atanabiliyor:
+  `role=model` veya `role=model:effort`, virgülle. Atanmayan rol hiçbir bayrak
+  almıyor ve bugünkü davranışı koruyor.
+- `codex exec` çağrısına `--model` ve `-c model_reasoning_effort=` ekleniyor;
+  ikisinin de gerçek Codex binary'sinde kabul edildiği doğrulandı.
+- `agent_runs` artık `model` ve `reasoning_effort` tutuyor; panelin rol
+  tablosunda "İstenen model" kolonu olarak görünüyor.
+- Bilinmeyen rol adı **yüksek sesle** hata veriyor: sessiz bir yazım hatası
+  "özellik çalışmıyor" ile ayırt edilemez olurdu.
+
+**Düzeltme — önceki notum yanlıştı.** TODO'da *"değer Codex'in `turn_context`
+olayından okunsun (akışta geliyor)"* yazıyordu. Gelmiyor: `exec --json` akışının
+tamamı `thread.started`, `turn.started`, `item.started`, `item.completed`,
+`turn.completed`, `turn.failed` ve `error`'dan oluşuyor; hiçbiri model taşımıyor.
+`turn_context`'i Codex'in **oturum kayıt dosyasından** okumuştum
+(`~/.codex/sessions/.../rollout-*.jsonl`), exec akışından değil.
+
+Bu yüzden kayıt **Studio'nun ne istediğini** tutuyor, Codex'in ne kullandığını
+değil. Atama yoksa alan `null` ve bu "Codex kendi yapılandırmasıyla karar verdi"
+demek. Ölçülmeyen şey ölçülmüş gibi yazılmıyor.
 
 **Review Repair kendi kırdığını onarabiliyor (26 Eylül 2026)**
 

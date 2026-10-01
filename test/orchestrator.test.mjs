@@ -9,6 +9,47 @@ import { spawnSync } from 'node:child_process';
 import { Database } from '../src/database.mjs';
 import { Orchestrator } from '../src/orchestrator.mjs';
 
+/** Tokens that satisfy the design contract, including real WCAG contrast. */
+export function fakeDesignTokens(overrides = {}) {
+  return JSON.stringify({
+    version: 1,
+    font_family: 'Inter',
+    signature_element: {
+      name: 'Odak Şeridi',
+      description: 'Her satırda kalan süreyi gösteren ince yatay şerit.',
+      surfaces: ['Görev listesi', 'Görev detayı'],
+    },
+    colors: {
+      light: {
+        surface: '#FFFFFF', onSurface: '#1A1C1E',
+        surfaceVariant: '#E7E0EC', onSurfaceVariant: '#3A3A3C',
+        primary: '#1B5E20', onPrimary: '#FFFFFF',
+        error: '#B3261E', onError: '#FFFFFF',
+        outline: '#6F6F70',
+      },
+      dark: {
+        surface: '#121316', onSurface: '#E3E2E6',
+        surfaceVariant: '#2B2B2F', onSurfaceVariant: '#C9C8CC',
+        primary: '#A6D8A8', onPrimary: '#0A2B0D',
+        error: '#F2B8B5', onError: '#601410',
+        outline: '#909094',
+      },
+    },
+    typography: [
+      { role: 'display', size: 32, weight: 700, lineHeight: 1.15, letterSpacing: -0.5 },
+      { role: 'title', size: 20, weight: 600, lineHeight: 1.3, letterSpacing: 0 },
+      { role: 'body', size: 15, weight: 400, lineHeight: 1.5, letterSpacing: 0.1 },
+      { role: 'label', size: 13, weight: 500, lineHeight: 1.4, letterSpacing: 0.5 },
+      { role: 'numeric', size: 15, weight: 600, lineHeight: 1.2, letterSpacing: 0 },
+    ],
+    spacing: [4, 8, 12, 16, 24, 32],
+    radius: [4, 8, 16],
+    elevation: [0, 1, 6],
+    motion: { fast: 150, medium: 220 },
+    ...overrides,
+  }, null, 2);
+}
+
 /**
  * Builds a review verdict that answers the project's acceptance checklist, the
  * way the contract now requires. Specs without criteria produce an empty list.
@@ -29,8 +70,12 @@ class FakeRunner {
   async run({ workspace, prompt, onEvent }) {
     if (prompt.includes('Produce only ARCHITECTURE.md')) {
       fs.writeFileSync(path.join(workspace, 'ARCHITECTURE.md'), '# Architecture\n\nMinimal plan.');
-    } else if (prompt.includes('Produce only UX_SPEC.md')) {
+    } else if (prompt.includes('DESIGN_TOKENS.json reddedildi')) {
+      // The correction round touches only the rejected file.
+      fs.writeFileSync(path.join(workspace, 'DESIGN_TOKENS.json'), fakeDesignTokens());
+    } else if (prompt.includes('UX_SPEC.md and DESIGN_TOKENS.json')) {
       fs.writeFileSync(path.join(workspace, 'UX_SPEC.md'), '# UX\n\nAccessible UI plan.');
+      fs.writeFileSync(path.join(workspace, 'DESIGN_TOKENS.json'), fakeDesignTokens());
     } else if (prompt.includes('Produce only DATA_MODEL.md')) {
       fs.writeFileSync(path.join(workspace, 'DATA_MODEL.md'), '# Data model\n\nTyped contracts.');
     } else if (prompt.includes('Produce only TEST_STRATEGY.md')) {

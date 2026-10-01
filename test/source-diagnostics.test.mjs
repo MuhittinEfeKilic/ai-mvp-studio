@@ -4,7 +4,61 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findSilentErrorHandling, runSourceDiagnostics } from '../src/source-diagnostics.mjs';
+import {
+  findBrokenEncoding, findSilentErrorHandling, runSourceDiagnostics,
+} from '../src/source-diagnostics.mjs';
+
+/** Double-encodes text the way an agent writing Latin-1 bytes as UTF-8 does. */
+const doubleEncode = text => Buffer.from(text, 'utf8').toString('latin1');
+
+test('text an agent double-encoded is reported with its location', () => {
+  // The measured case: a repair agent rewrote this exact string and no gate saw
+  // it. The reviewer caught it by chance and the detour cost 106.506 tokens.
+  const source = [
+    'String label(int streak) {',
+    `  return streak == 0 ? 'Seri yok' : '$streak ${doubleEncode('günlük seri')}';`,
+    '}',
+  ].join('\n');
+  const findings = findBrokenEncoding(source, 'lib/features/a/page.dart');
+  assert.equal(findings.length, 1, 'bozulan satır başına tek bulgu');
+  assert.equal(findings[0].line, 2);
+  assert.match(findings[0].reason, /çift kodlanmış UTF-8/);
+});
+
+test('correctly encoded Turkish text is never a finding', () => {
+  const source = [
+    "const a = 'günlük seri';",
+    "const b = 'Alışkanlıklar · Bugün planlı değil';",
+    "const c = 'İŞÇİ ÖĞÜN ÇĞİÖŞÜ';",
+    '// Açıklama satırı: şu an güncel.',
+  ].join('\n');
+  assert.deepEqual(findBrokenEncoding(source, 'lib/a.dart'), []);
+});
+
+test('every Turkish letter survives a double-encoding round trip check', () => {
+  // Each of these corrupts into a different lead/continuation pair; a pattern
+  // that only knew about `ü` would silently pass the rest.
+  for (const letter of ['ü', 'ı', 'ş', 'ğ', 'ç', 'ö', 'İ', 'Ş', 'Ğ', 'Ç', 'Ö', 'Ü']) {
+    const broken = findBrokenEncoding(`const a = '${doubleEncode(letter)}';`, 'lib/a.dart');
+    assert.equal(broken.length, 1, `${letter} yakalanmadı`);
+    assert.deepEqual(findBrokenEncoding(`const a = '${letter}';`, 'lib/a.dart'), [], letter);
+  }
+});
+
+test('broken encoding fails the diagnostics check alongside swallowed errors', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mvp-encoding-'));
+  fs.mkdirSync(path.join(workspace, 'lib'), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspace, 'lib', 'page.dart'),
+    `const label = '${doubleEncode('günlük seri')}';\n`,
+    'utf8',
+  );
+  const report = runSourceDiagnostics(workspace);
+  assert.equal(report.check.status, 'FAIL', 'bozuk kodlama kapıyı düşürmeli');
+  assert.equal(report.check.exit_code, 1);
+  assert.equal(report.findings.length, 1);
+  assert.match(report.log, /kodlaması bozuk/);
+});
 
 test('swallowed errors are reported with their location and reason', () => {
   const source = [
